@@ -1,0 +1,86 @@
+Python Object Sharer
+Reinier Heeres, 2013
+
+
+
+Overview
+
+This object sharer is different from other forms by being a peer-to-peer sharer
+with equal treatment of client and server. Once connections are made the
+communication is completely bi-directional, so not simply following a
+request-reply pattern. This allows, for example, the exchange of signal
+messages as in regular interactive application programming.
+
+The object sharer allows to use remote python objects as if they were local.
+The proxies are generated based on introspection of the remote object, with
+the following rules:
+- Only functions and variables that do not start with a '_' are exposed.
+(except for special functions __getitem__  and __setitem__)
+- The reply from functions decorated with '@cache_result' will be cached.
+
+The underlying communication protocol works over ZMQ socket and objects are
+pickled. There are two object types that are treated in a special way:
+- Shared objects will be sent as a 'reference' and proxies are created on the
+receiving side. If the receiving side is not connected to the 'server' that
+contains the object it will automatically do so.
+- Numpy arrays are not pickled, but sent in binary form over ZMQ to speed
+things up.
+
+
+
+Threading
+
+ZMQ sockets are not thread-safe; therefore currently all ObjectSharer related
+code should live in the same thread. If heavy work needs to be done a worker thread should be spawned.
+
+
+
+Underlying protocol details
+
+- Messages are exchanged using zmq sockets. Every ObjectSharer instance has
+one socket of type ROUTER for all incoming messages. For every client it
+wants to talk to it has a socket of type DEALER.
+
+- There is really no distinction between clients and servers; everyone can
+talk to everyone and communication is bi-directional. However, we stick to
+the nomenclature where the client is the one initiating the connection. When
+a client connects to a server it sends the "hello_from" message. The server
+directly sets up a reverse connection and sends the "hello_from" message as
+well. Both instances then try to retrieve the "root" object from the other
+party. In case of the 'client' we wait for this process to finish, whereas for
+the server we let this happen asynchronously.
+
+- Each message is a multipart message. The first item identifies the client
+(inserted by zmq). The second part is a pickled python object to describe
+the message. Extra parts may be provided containing raw data for more
+efficient transport, for example for numpy arrays.
+
+- The pickled python object should be a tuple. The first item identifies the
+message type:
+
+    'call': further items:
+        <callid>:
+        <object name>:
+        <function name>:
+        <args>: if this contains numpy arrays their content will be available
+                in an extra message part.
+        <kwargs>: keyword arguments, if this contains numpy arrays content
+                  will be available in extra message parts.
+
+    'signal': further items:
+        <object name>:
+        <signal name>:
+        <args>: if this contains numpy arrays their content will be available
+                in an extra message part.
+        <kwargs>: if this contains numpy arrays their content will be available
+                in an extra message part.
+
+    'return': further items:
+        <callid>:
+        <reply>: if this contains numpy arrays their content will be available
+                 in an extra message part.
+
+Extra message parts are provided in the following order:
+- Tuples are traversed depth-first.
+- Dictionaries are traversed through iteritems, which should result in same-
+ordered traversion for the same elements.
