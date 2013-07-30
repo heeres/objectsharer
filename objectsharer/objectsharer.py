@@ -498,6 +498,7 @@ class ObjectSharer(object):
             client.receive_signal(uid, signame, *args, **kwargs)
 
     def receive_signal(self, uid, signame, *args, **kwargs):
+        kwargs.pop('os_signal', None)
         logging.debug('Received signal %s(%r, %r) from %s',
                 signame, args, kwargs, uid)
 
@@ -513,10 +514,10 @@ class ObjectSharer(object):
                     fargs.extend(info['args'])
                     fkwargs = kwargs.copy()
                     fkwargs.update(info['kwargs'])
-                    info['function'](*fargs, **fkwargs)
-                    ncalls += 1
+                    info['callback'](*fargs, **fkwargs)
                 except Exception, e:
-                    logging.warning('Callback to %s failed for %s.%s: %s', info['function'], uid, signame, str(e))
+                    logging.warning('Callback to %s failed for %s.%s: %s',
+                            info.get('callback', None), uid, signame, str(e))
 
         end = time.time()
         logging.debug('Did %d callbacks in %.03fms for sig %s',
@@ -741,7 +742,7 @@ class ObjectProxy(object):
             setattr(self, propname, 'blaat')
 
     def connect(self, signame, func):
-        return helper.connect(self._OS_UID, signame, func)
+        return helper.connect_signal(self._OS_UID, signame, func)
 
     def disconnect(self, hid):
         return helper.disconnect(hid)
