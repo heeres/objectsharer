@@ -516,8 +516,9 @@ class ObjectSharer(object):
                     fkwargs.update(info['kwargs'])
                     info['callback'](*fargs, **fkwargs)
                 except Exception, e:
-                    logging.warning('Callback to %s failed for %s.%s: %s',
-                            info.get('callback', None), uid, signame, str(e))
+                    import traceback
+                    logging.warning('Callback to %s failed for %s.%s: %s\n%s',
+                            info.get('callback', None), uid, signame, str(e), traceback.format_exc())
 
         end = time.time()
         logging.debug('Did %d callbacks in %.03fms for sig %s',
