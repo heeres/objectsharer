@@ -573,6 +573,11 @@ class ObjectSharer(object):
                 self.request_client_proxy(from_uid, async=True)
             return
 
+        if info[0] == 'goodbye_from':
+            logging.debug('Goodbye client %s from %s' % (from_uid, info[1]))
+            self.backend.forget_connection(info[1], remote=False)
+            return
+
         # Ping - pong to check alive
         if info[0] == 'ping':
             logging.debug('PING')
@@ -832,6 +837,35 @@ class ZMQBackend(object):
                 return k
         return None
 
+    def refresh_connection(self, addr):
+        self.forget_connection(addr)
+        time.sleep(.01)
+        self.connect_to(addr)
+
+    def forget_connection(self, addr, remote=True):
+        logging.debug('Forgetting connection: %s' % addr)
+        msg = ('goodbye_from', 'tcp://%s:%d' % (self.addr, self.port))
+        if addr not in self.addr_to_sock_map: # Open up socket so we can tell remote to forget it
+            if remote:
+                sock = self.ctx.socket(zmq.DEALER)
+                sock.connect(addr)
+                sock.send(pickle.dumps(msg))
+                sock.close()
+            else:
+                return
+        else:
+            if remote:
+                sock = self.addr_to_sock_map[addr]
+                sock.send(pickle.dumps(msg))
+                sock.close()
+
+            del self.addr_to_sock_map[addr]
+            del self.addr_to_uid_map[addr]
+
+            uid = self.addr_to_uid_map[addr]
+            if uid in self.uid_to_sock_map:
+                del self.uid_to_sock_map[uid]
+
     def connect_to(self, addr, delay=10, async=False, uid=None):
         '''
         Connect to a remote ObjectSharer at <addr>.
@@ -872,7 +906,7 @@ class ZMQBackend(object):
         if addr not in self.addr_to_uid_map:
             raise ValueError('UID not resolved!')
         helper.request_client_proxy(self.addr_to_uid_map[addr], async=async)
-            
+
     def send_to(self, dest, msg, bufs=None):
         '''
         Send <msg> to client <dest> (a uid).
