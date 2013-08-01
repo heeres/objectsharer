@@ -575,7 +575,14 @@ class ObjectSharer(object):
 
         if info[0] == 'goodbye_from':
             logging.debug('Goodbye client %s from %s' % (from_uid, info[1]))
+            forget_uid = self.backend.get_uid_for_addr(info[1])
+            if forget_uid in self.clients:
+                del self.clients[forget_uid]
+                logging.debug('deleting client %s' % forget_uid)
             self.backend.forget_connection(info[1], remote=False)
+            if from_uid in self.clients:
+                del self.clients[from_uid]
+                logging.debug('deleting client %s' % from_uid)
             return
 
         # Ping - pong to check alive
@@ -860,11 +867,11 @@ class ZMQBackend(object):
                 sock.close()
 
             del self.addr_to_sock_map[addr]
-            del self.addr_to_uid_map[addr]
 
-            uid = self.addr_to_uid_map[addr]
-            if uid in self.uid_to_sock_map:
-                del self.uid_to_sock_map[uid]
+            if addr in self.addr_to_uid_map:
+                uid = self.addr_to_uid_map.pop(addr)
+                if uid in self.uid_to_sock_map:
+                    del self.uid_to_sock_map[uid]
 
     def connect_to(self, addr, delay=10, async=False, uid=None):
         '''
