@@ -25,6 +25,13 @@ import uuid
 import types
 import base64
 
+logger = logging.getLogger("Object Sharer")
+logger.setLevel(logging.DEBUG)
+handler = logging.StreamHandler()
+formatter = logging.Formatter('%(name)s:%(levelname)s:%(message)s')
+handler.setLevel(logging.WARNING)
+handler.setFormatter(formatter)
+logger.addHandler(handler)
 DEFAULT_TIMEOUT = 5000      # Timeout in msec
 
 # List of special functions to wrap
@@ -77,7 +84,7 @@ class AsyncReply(object):
         self.val = val
         self.val_valid = True
         if self.callback is not None:
-            logging.debug('Performing callback for call id %d' % self._callid)
+            logger.debug('Performing callback for call id %d' % self._callid)
             self.callback(val)
 
     def get(self, block=False, delay=DEFAULT_TIMEOUT):
@@ -263,7 +270,7 @@ class ObjectSharer(object):
         callid = self._last_call_id
         async_reply = AsyncReply(callid, callback=callback)
         self.reply_objects[callid] = async_reply
-        logging.debug('Sending call %d to %s: %s.%s(%s,%s), async=%s', callid, client, obj_name, func_name, ellipsize(str(args)), ellipsize(str(kwargs)), async)
+        logger.debug('Sending call %d to %s: %s.%s(%s,%s), async=%s', callid, client, obj_name, func_name, ellipsize(str(args)), ellipsize(str(kwargs)), async)
 
         args, arlist = _wrap_ars_sobjs(args)
         kwargs, arlist = _wrap_ars_sobjs(kwargs, arlist)
@@ -354,14 +361,14 @@ class ObjectSharer(object):
         # Handle clients that we are not yet connected to.
         if client_id not in self.clients:
             if client_addr is None:
-                logging.warning('Object from unknown client requested')
+                logger.warning('Object from unknown client requested')
                 return None
-            logging.info('Object %s requested from unconnected client %s @ %s, connecting...', objname, client_id, client_addr)
+            logger.info('Object %s requested from unconnected client %s @ %s, connecting...', objname, client_id, client_addr)
             self.backend.connect_to(client_addr, uid=client_id)
 
         # We should be connected now
         if client_id not in self.clients:
-            logging.error('Unable to connect to client')
+            logger.error('Unable to connect to client')
             return None
 
         return self.clients[client_id].get_object_info(objname)
@@ -427,7 +434,7 @@ class ObjectSharer(object):
         if obj is None:
             return
         if hasattr(obj, '_OS_UID') and obj._OS_UID is not None:
-            logging.warning('Object %s already registered' % obj._OS_UID)
+            logger.warning('Object %s already registered' % obj._OS_UID)
             return
 
         obj._OS_UID = str(uuid.uuid4())
@@ -445,7 +452,7 @@ class ObjectSharer(object):
 
     def unregister(self, obj):
         if not hasattr(obj, '_OS_UID'):
-            logging.warning('Trying to unregister an unknown object')
+            logger.warning('Trying to unregister an unknown object')
 
         if obj._OS_UID in self._objects:
             del self._objects[obj._OS_UID]
@@ -489,7 +496,7 @@ class ObjectSharer(object):
                     break
 
     def emit_signal(self, uid, signame, *args, **kwargs):
-        logging.debug('Emitting %s(%r, %r) for %s to %d clients',
+        logger.debug('Emitting %s(%r, %r) for %s to %d clients',
                 signame, args, kwargs, uid, len(self.clients))
 
         kwargs['os_signal'] = True
@@ -499,7 +506,7 @@ class ObjectSharer(object):
 
     def receive_signal(self, uid, signame, *args, **kwargs):
         kwargs.pop('os_signal', None)
-        logging.debug('Received signal %s(%r, %r) from %s',
+        logger.debug('Received signal %s(%r, %r) from %s',
                 signame, args, kwargs, uid)
 
         ncalls = 0
@@ -517,11 +524,11 @@ class ObjectSharer(object):
                     info['callback'](*fargs, **fkwargs)
                 except Exception, e:
                     import traceback
-                    logging.warning('Callback to %s failed for %s.%s: %s\n%s',
+                    logger.warning('Callback to %s failed for %s.%s: %s\n%s',
                             info.get('callback', None), uid, signame, str(e), traceback.format_exc())
 
         end = time.time()
-        logging.debug('Did %d callbacks in %.03fms for sig %s',
+        logger.debug('Did %d callbacks in %.03fms for sig %s',
                 ncalls, (end - start) * 1000, signame)
 
 
@@ -536,7 +543,7 @@ class ObjectSharer(object):
     def _add_client_to_list(self, uid, root_info):
         if root_info is None:
             raise Exception('Unable to retrieve root object from %s' % uid)
-        logging.debug('  root@%s.get_object_info() reply: %s', uid, root_info)
+        logger.debug('  root@%s.get_object_info() reply: %s', uid, root_info)
         self.clients[uid] = ObjectProxy(uid, root_info)
         self.clients[uid].list_objects(callback=lambda reply, uid=uid:
             self._update_client_object_list(uid, reply))
@@ -561,40 +568,40 @@ class ObjectSharer(object):
         <bufs> contains extra buffers used to unwrap numpy arrays
         '''
 
-        logging.debug('Msg from %s:', from_uid)
+        logger.debug('Msg from %s:', from_uid)
 
-#        logging.debug('  Msg: %s', info)
+#        logger.debug('  Msg: %s', info)
         if info[0] == 'hello_from':
-            logging.debug('Client %s connected from %s' % (from_uid, info[1]))
+            logger.debug('Client %s connected from %s' % (from_uid, info[1]))
             self.backend.connect_from(info[1], from_uid)
             if not self.backend.connected_to(from_uid):
-                logging.debug('Initiating reverse connection...')
+                logger.debug('Initiating reverse connection...')
                 self.backend.connect_to(info[1])
                 self.request_client_proxy(from_uid, async=True)
             return
 
         if info[0] == 'goodbye_from':
-            logging.debug('Goodbye client %s from %s' % (from_uid, info[1]))
+            logger.debug('Goodbye client %s from %s' % (from_uid, info[1]))
             forget_uid = self.backend.get_uid_for_addr(info[1])
             if forget_uid in self.clients:
                 del self.clients[forget_uid]
-                logging.debug('deleting client %s' % forget_uid)
+                logger.debug('deleting client %s' % forget_uid)
             self.backend.forget_connection(info[1], remote=False)
             if from_uid in self.clients:
                 del self.clients[from_uid]
-                logging.debug('deleting client %s' % from_uid)
+                logger.debug('deleting client %s' % from_uid)
             return
 
         # Ping - pong to check alive
         if info[0] == 'ping':
-            logging.debug('PING')
+            logger.debug('PING')
             self.backend.send_to(from_uid, ('pong',))
         elif info[0] == 'pong':
-            logging.debug('PONG')
+            logger.debug('PONG')
 
         elif info[0] == 'call':
             if len(info) < 6:
-                logging.debug('Invalid call msg')
+                logger.debug('Invalid call msg')
                 return Exception('Invalid call msg')
 
             (callid, objid, funcname, args, kwargs) = info[1:6]
@@ -603,13 +610,13 @@ class ObjectSharer(object):
             args, bufs = _unwrap_ars_sobjs(args, bufs, from_uid)
             kwargs, bufs = _unwrap_ars_sobjs(kwargs, bufs, from_uid)
 
-            logging.debug('  Processing call %s: %s.%s(%s,%s)' % (callid, objid, funcname, args, kwargs))
+            logger.debug('  Processing call %s: %s.%s(%s,%s)' % (callid, objid, funcname, args, kwargs))
             obj = self.get_object(objid)
             if obj is None:
                 return Exception('Object %s not available' % objid)
             func = getattr(obj, funcname, None)
             if func is None:
-                return Exception('Object %s does not have function %s' % (uid, funcname))
+                return Exception('Object %s does not have function %s' % (objid, funcname))
 
             try:
                 ret = func(*args, **kwargs)
@@ -625,7 +632,7 @@ class ObjectSharer(object):
 #            print 'Sending back for call %d: %s' % (callid, ret)
             # Wrap return value
             ret, bufs = _wrap_ars_sobjs(ret)
-            logging.debug('  Returning for call %s: %s' % (callid, ellipsize(str(ret))))
+            logger.debug('  Returning for call %s: %s' % (callid, ellipsize(str(ret))))
 
             self.backend.send_to(from_uid, (
                 'return',
@@ -635,21 +642,21 @@ class ObjectSharer(object):
 
         elif info[0] == 'return':
             if len(info) < 3:
-                logging.debug('Invalid call msg')
+                logger.debug('Invalid call msg')
                 return Exception('Invalid return msg')
 
             # Get call id and unwrap return value
             callid, ret = info[1:3]
             ret, bufs = _unwrap_ars_sobjs(ret, bufs, from_uid)
 
-            logging.debug('  Processing return for %s', callid)
+            logger.debug('  Processing return for %s', callid)
             if callid in self.reply_objects:
                 self.reply_objects[callid].set(ret)
             else:
                 raise ValueError('Reply for unkown call %s', callid)
 
         else:
-            logging.debug('Unknown msg: %s', info)
+            logger.debug('Unknown msg: %s', info)
 
 class RootObject(object):
     '''
@@ -818,7 +825,7 @@ class ZMQBackend(object):
         else:
             self.srv.bind('tcp://%s:%d' % (addr, port))
 
-        logging.debug('ObjectSharer listening at %s', self.get_addr())
+        logger.debug('ObjectSharer listening at %s', self.get_addr())
 
     def connect_from(self, addr, uid):
         '''
@@ -850,7 +857,7 @@ class ZMQBackend(object):
         self.connect_to(addr)
 
     def forget_connection(self, addr, remote=True):
-        logging.debug('Forgetting connection: %s' % addr)
+        logger.debug('Forgetting connection: %s' % addr)
         msg = ('goodbye_from', 'tcp://%s:%d' % (self.addr, self.port))
         if addr not in self.addr_to_sock_map: # Open up socket so we can tell remote to forget it
             if remote:
@@ -873,23 +880,24 @@ class ZMQBackend(object):
                 if uid in self.uid_to_sock_map:
                     del self.uid_to_sock_map[uid]
 
-    def connect_to(self, addr, delay=10, async=False, uid=None):
+    def connect_to(self, addr, delay=20, async=False, uid=None):
         '''
         Connect to a remote ObjectSharer at <addr>.
         If <uid> is specified it is associated with the client at <addr>.
         If <async> is False (default), wait for a reply.
         '''
-        logging.debug('Connecting to %s' % addr)
+        logger.debug('Connecting to %s' % addr)
         if addr in self.addr_to_sock_map:
-            logging.warning('Already connected to %s' % addr)
+            logger.warning('Already connected to %s' % addr)
             return
         if uid is not None:
             if uid in self.addr_to_uid_map.values():
-                logging.warning('Client %s already present at different address')
+                logger.warning('Client %s already present at different address')
                 return
             self.addr_to_uid_map[addr] = uid
 
         sock = self.ctx.socket(zmq.DEALER)
+
         sock.connect(addr)
         self.addr_to_sock_map[addr] = sock
         uid = self.addr_to_uid_map.get(addr, None)
@@ -904,7 +912,7 @@ class ZMQBackend(object):
         # On the server, which received the hello_from first, this should
         # never have to wait.
         if addr not in self.addr_to_uid_map:
-            logging.debug('Waiting for hello reply from server...')
+            logger.debug('Waiting for hello reply from server...')
             hello = AsyncHelloReply(addr)
             self.main_loop(delay=delay, wait_for=hello)
             if not hello.is_valid():
@@ -922,7 +930,7 @@ class ZMQBackend(object):
         to be transmitted efficiently.
         '''
 
-#        logging.debug('Sending to %s: %s', dest, msg)
+        logger.debug('Sending to %s: %s', dest, msg)
         sock = self.uid_to_sock_map.get(dest, None)
         if sock is None:
             raise ValueError('Unable to resolve destination %s' % dest)
@@ -976,14 +984,17 @@ class ZMQBackend(object):
                 info = pickle.loads(msgs[1])
 #                print 'Really received: %s' % (info, )
             except Exception, e:
-                logging.warning('Unable to decode object: %s [%r]', str(e), msgs[1])
+                logger.warning('Unable to decode object: %s [%r]', str(e), msgs[1])
                 return
 
             # Process
             try:
+                logger.debug('Starting Message processing %s' % str(info))
                 helper.process_message(client, info, msgs[2:])
             except Exception, e:
-                logging.warning('Failed to process message: %s', str(e))
+                logger.warning('Failed to process message: %s', str(e))
+            finally:
+                logger.debug('Message processed %s' %  str(info))
 
             # If we are waiting for call results and have them, return
             if wait_for is not None:
@@ -1006,7 +1017,7 @@ class ZMQBackend(object):
                     return False
                 # Adjust delay
                 delay -= cur_delay
-#                logging.warning('  Repolling with delay %s', delay)
+#                logger.warning('  Repolling with delay %s', delay)
 
     def _qt_timer(self):
         self.main_loop(delay=1e-9)
@@ -1019,7 +1030,7 @@ class ZMQBackend(object):
         '''
 
         if self.timer is not None:
-            logging.warning('Timer already installed')
+            logger.warning('Timer already installed')
             return False
 
         from PyQt4 import QtCore, QtGui
