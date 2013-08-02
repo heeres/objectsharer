@@ -253,6 +253,7 @@ class ObjectSharer(object):
         self._last_hid = 0
         self._callbacks_hid = {}
         self._callbacks_name = {}
+        self._signal_queue = []
 
     def set_backend(self, backend):
         self.backend = backend
@@ -531,7 +532,6 @@ class ObjectSharer(object):
         logger.debug('Did %d callbacks in %.03fms for sig %s',
                 ncalls, (end - start) * 1000, signame)
 
-
     #####################################
     # Client management
     #####################################
@@ -560,12 +560,15 @@ class ObjectSharer(object):
     # Message processing
     #####################################
 
-    def process_message(self, from_uid, info, bufs):
+    def process_message(self, from_uid, info, bufs, waiting=False):
         '''
         Process a remote message.
         <from_uid> identifies the client that sent the message
         <info> is the message tuple
         <bufs> contains extra buffers used to unwrap numpy arrays
+
+        If <waiting> is True it indicates a main loop is waiting for something,
+        in which case signals get queued.
         '''
 
         logger.debug('Msg from %s:', from_uid)
@@ -605,6 +608,11 @@ class ObjectSharer(object):
                 return Exception('Invalid call msg')
 
             (callid, objid, funcname, args, kwargs) = info[1:6]
+
+            # Store signals if waiting a reply or event
+            if waiting and kwargs.get('os_signal', False):
+                self._signal_queue.append((from_uid, info, bufs))
+                return
 
             # Unwrap arguments
             args, bufs = _unwrap_ars_sobjs(args, bufs, from_uid)
@@ -657,6 +665,18 @@ class ObjectSharer(object):
 
         else:
             logger.debug('Unknown msg: %s', info)
+
+    def flush_queue(self, nmax=5):
+        '''
+        Process a maximum on <nmax> queued signals.
+        Return True if signal queue empty when returning.
+        '''
+        i = 0
+        while i < nmax and len(self._signal_queue) > 0:
+            from_uid, info, bufs = self._signal_queue.pop(0)
+            self.process_message(from_uid, info, bufs)
+            i += 1
+        return (len(self._signal_queue) == 0)
 
 class RootObject(object):
     '''
@@ -952,6 +972,7 @@ class ZMQBackend(object):
     def main_loop(self, delay=None, wait_for=None):
         '''
         Run the receiving main loop for a maximum of <delay> msec.
+
         If <wait_for> is specified (a single object or a list), the loop will
         terminate once all objects return True from is_valid().
         '''
@@ -964,6 +985,10 @@ class ZMQBackend(object):
                 wait_for = list(wait_for)
             else:
                 wait_for = [wait_for,]
+
+        # If nothing to wait for, flush signal queue
+        else:
+            helper.flush_queue()
 
         poller = zmq.Poller()
         poller.register(self.srv, flags=zmq.POLLIN)
@@ -990,7 +1015,8 @@ class ZMQBackend(object):
             # Process
             try:
                 logger.debug('Starting Message processing %s' % str(info))
-                helper.process_message(client, info, msgs[2:])
+                waiting = (wait_for is not None)
+                helper.process_message(client, info, msgs[2:], waiting=waiting)
             except Exception, e:
                 logger.warning('Failed to process message: %s', str(e))
             finally:
