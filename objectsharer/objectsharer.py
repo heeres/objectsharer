@@ -50,6 +50,9 @@ def ellipsize(s):
 class RemoteException(Exception):
     pass
 
+class TimeoutError(RuntimeError):
+    pass
+
 class OSSpecial(object):
     def __init__(self, **kwargs):
         for k, v in kwargs:
@@ -265,7 +268,7 @@ class ObjectSharer(object):
         is_signal = kwargs.get('os_signal', False)
         callback = kwargs.pop('callback', None)
         async = kwargs.pop('async', False) or (callback is not None) or is_signal
-        timeout = kwargs.get('timeout', DEFAULT_TIMEOUT)
+        timeout = kwargs.pop('timeout', DEFAULT_TIMEOUT)
 
         self._last_call_id += 1
         callid = self._last_call_id
@@ -294,7 +297,7 @@ class ObjectSharer(object):
                 raise val
             return val
         else:
-            raise ValueError('Call timed out')
+            raise TimeoutError('Call timed out')
 
     #####################################
     # Object resolving functions.
@@ -372,9 +375,14 @@ class ObjectSharer(object):
             logger.error('Unable to connect to client')
             return None
 
-        return self.clients[client_id].get_object_info(objname)
+        try:
+            return self.clients[client_id].get_object_info(objname)
+        except TimeoutError:
+            logger.warning('Client %s unresponsive: Removing from connected' % client_id)
+            del self.clients[client_id] # I'm trying to think of a better place to do client invalidation!
+            return None
 
-    def get_object_from(self, objname, client_id, client_addr=None):
+    def get_object_from(self, objname, client_id, client_addr=None, no_cache=False):
         '''
         Get an object from a particular client.
         If a proxy is available in cache return that
@@ -383,8 +391,9 @@ class ObjectSharer(object):
 
         # Return from cache if it is the right object (it could be an object
         # with the same alias at a different location),
-        if objname in self._proxy_cache and self._proxy_cache[objname]._OS_SRV_ID == client_id:
-            return self._proxy_cache[objname]
+        if not no_cache:
+            if objname in self._proxy_cache and self._proxy_cache[objname]._OS_SRV_ID == client_id:
+                return self._proxy_cache[objname]
 
         info = self.get_object_info_from(objname, client_id, client_addr=client_addr)
         if info is None:
@@ -394,7 +403,7 @@ class ObjectSharer(object):
         self._proxy_cache[proxy.os_get_uid()] = proxy
         return proxy
 
-    def find_object(self, objname, client_id=None, client_addr=None):
+    def find_object(self, objname, client_id=None, client_addr=None, no_cache=False):
         '''
         Find a particular object either locally or with a client.
         '''
@@ -406,19 +415,20 @@ class ObjectSharer(object):
         obj = self.get_object(objname)
         if obj is not None:
             return obj
-        # A remote object with cached proxy?
-        if objname in self._proxy_cache:
-            return self._proxy_cache[objname]
+        if not no_cache:
+            # A remote object with cached proxy?
+            if objname in self._proxy_cache:
+                return self._proxy_cache[objname]
 
-        # See if we already know which client has this object
-        for client_id, names in self._client_object_list_cache.iteritems():
-            if objname in names:
-                return self.get_object_from(objname, client_id)
+            # See if we already know which client has this object
+            for client_id, names in self._client_object_list_cache.iteritems():
+                if objname in names:
+                    return self.get_object_from(objname, client_id)
 
         # Query all clients
         # TODO: asynchronously
         for client_id in self.clients.keys():
-            obj = self.get_object_from(objname, client_id)
+            obj = self.get_object_from(objname, client_id, no_cache=no_cache)
             if obj is not None:
                 return obj
         return None
@@ -936,7 +946,7 @@ class ZMQBackend(object):
             hello = AsyncHelloReply(addr)
             self.main_loop(delay=delay, wait_for=hello)
             if not hello.is_valid():
-                raise ValueError('Connection to %s timed out; no reply received')
+                raise TimeoutError('Connection to %s timed out; no reply received' % addr)
 
         if addr not in self.addr_to_uid_map:
             raise ValueError('UID not resolved!')
