@@ -278,14 +278,19 @@ class ObjectSharer(object):
 
         args, arlist = _wrap_ars_sobjs(args)
         kwargs, arlist = _wrap_ars_sobjs(kwargs, arlist)
-        self.backend.send_to(client, (
+        msg = (
             'call',
             callid,
             obj_name,
             func_name,
             args,
             kwargs
-        ), arlist)
+        )
+        try:
+            msg = pickle.dumps(msg)
+        except:
+            raise Exception('Unable to pickle function call: %s' % str(msg))
+        self.backend.send_to(client, msg, arlist)
 
         if async:
             return async_reply
@@ -608,7 +613,8 @@ class ObjectSharer(object):
         # Ping - pong to check alive
         if info[0] == 'ping':
             logger.debug('PING')
-            self.backend.send_to(from_uid, ('pong',))
+            msg = pickle.pickle(('pong',))
+            self.backend.send_to(from_uid, msg)
         elif info[0] == 'pong':
             logger.debug('PONG')
 
@@ -652,11 +658,13 @@ class ObjectSharer(object):
             ret, bufs = _wrap_ars_sobjs(ret)
             logger.debug('  Returning for call %s: %s' % (callid, ellipsize(str(ret))))
 
-            self.backend.send_to(from_uid, (
-                'return',
-                callid,
-                ret
-            ), bufs)
+            try:
+                msg = pickle.dumps(('return', callid, ret))
+            except:
+                ret = RemoteException('Unable to pickle return %s' % str(ret))
+                msg = pickle.dumps(('return', callid, ret))
+                bufs = None
+            self.backend.send_to(from_uid, msg, bufs)
 
         elif info[0] == 'return':
             if len(info) < 3:
@@ -671,7 +679,7 @@ class ObjectSharer(object):
             if callid in self.reply_objects:
                 self.reply_objects[callid].set(ret)
             else:
-                raise ValueError('Reply for unkown call %s', callid)
+                raise Exception('Reply for unkown call %s', callid)
 
         else:
             logger.debug('Unknown msg: %s', info)
@@ -949,7 +957,7 @@ class ZMQBackend(object):
                 raise TimeoutError('Connection to %s timed out; no reply received' % addr)
 
         if addr not in self.addr_to_uid_map:
-            raise ValueError('UID not resolved!')
+            raise Exception('UID not resolved!')
         helper.request_client_proxy(self.addr_to_uid_map[addr], async=async)
 
     def send_to(self, dest, msg, bufs=None):
@@ -960,19 +968,11 @@ class ZMQBackend(object):
         to be transmitted efficiently.
         '''
 
-        logger.debug('Sending to %s: %s', dest, msg)
+        logger.debug('Sending %d bytes to %s', len(msg), dest)
         sock = self.uid_to_sock_map.get(dest, None)
         if sock is None:
-            raise ValueError('Unable to resolve destination %s' % dest)
+            raise Exception('Unable to resolve destination %s' % dest)
         dest = base64.b64decode(dest)
-
-        try:
-#            print 'Really sending %s' % (msg, )
-            msg = pickle.dumps(msg)
-        except:
-            msg = Exception('Unable to pickle %s' % msg)
-            msg = pickle.dumps(msg)
-            bufs = None
 
         msg = [msg, ]
         if bufs is not None:
@@ -1011,7 +1011,7 @@ class ZMQBackend(object):
             # Receive message
             msgs = self.srv.recv_multipart()
             if len(msgs) < 2:
-                raise ValueError('Too short message received')
+                raise Exception('Too short message received')
             client = base64.b64encode(msgs[0])
 
             # Decode message
@@ -1030,7 +1030,7 @@ class ZMQBackend(object):
             except Exception, e:
                 logger.warning('Failed to process message: %s', str(e))
             finally:
-                logger.debug('Message processed %s' %  str(info))
+                logger.debug('Message processed %s' % str(info))
 
             # If we are waiting for call results and have them, return
             if wait_for is not None:
