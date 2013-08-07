@@ -462,6 +462,7 @@ class ObjectSharer(object):
         obj._OS_emit = getattr(obj, 'emit', None)
         # TODO: make obj properly assigned
         obj.emit = lambda signal, *args, **kwargs: self.emit_signal(obj._OS_UID, signal, *args, **kwargs)
+        obj.connect = lambda signame, callback, *args, **kwargs: self.connect_signal(obj._OS_UID, signame, callback, *args, **kwargs)
         self.objects[obj._OS_UID] = obj
 
         root.emit('object-added', obj._OS_UID, name=name)
@@ -519,6 +520,7 @@ class ObjectSharer(object):
         for client_id, client in self.clients.iteritems():
 #            print 'Calling receive sig, uid=%s, signame %s, args %s, kwargs %s' % (uid, signame, args, kwargs)
             client.receive_signal(uid, signame, *args, **kwargs)
+        self.receive_signal(uid, signame, *args, **kwargs)
 
     def receive_signal(self, uid, signame, *args, **kwargs):
         kwargs.pop('os_signal', None)
