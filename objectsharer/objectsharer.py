@@ -333,6 +333,8 @@ class ObjectSharer(object):
         for key, val in inspect.getmembers(obj):
             if key.startswith('_') and not key in SPECIAL_FUNCTIONS:
                 continue
+            if key == 'connect':
+                continue
             elif callable(val):
                 if hasattr(val, '_share_options'):
                     opts = val._share_options
