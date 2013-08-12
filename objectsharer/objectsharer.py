@@ -24,6 +24,7 @@ import inspect
 import uuid
 import types
 import base64
+import bisect
 
 logger = logging.getLogger("Object Sharer")
 logger.setLevel(logging.DEBUG)
@@ -842,6 +843,9 @@ class ZMQBackend(object):
         self.addr_to_uid_map = {}
         self.uid_to_sock_map = {}
         helper.set_backend(self)
+        self._timeouts = {}
+        self._scheduled_timeouts = []
+        self._last_timeout_id = 0
 
     def get_addr(self):
         '''
@@ -983,6 +987,55 @@ class ZMQBackend(object):
             msg.extend(bufs)
         sock.send_multipart(msg)
 
+    def timeout_add(self, delay, func, *args):
+        '''
+        Schedule a callback within the ZBE mainloop. If the function returns
+        True it will be rescheduled to occur periodically. If it returns False
+        it gets called only once.
+
+        <delay> in msec.
+        '''
+        self._last_timeout_id += 1
+        start = time.time()
+        self._timeouts[self._last_timeout_id] = dict(
+            start=start,
+            delay=delay/1000.0,
+            func=func,
+            args=args
+        )
+        bisect.insort(self._scheduled_timeouts, (start+delay/1000.0, self._last_timeout_id))
+        return self._last_timeout_id
+
+    def timeout_remove(self, t_id):
+        if t_id in self._timeouts:
+            del self._timeouts[t_id]
+
+    def _run_timeouts(self):
+        now = time.time()
+        while len(self._scheduled_timeouts) > 0 and self._scheduled_timeouts[0][0] < now:
+            t, t_id = self._scheduled_timeouts.pop(0)
+            info = self._timeouts.get(t_id, None)
+            if info is None:
+                continue
+
+            try:
+                ret = info['func'](*info['args'])
+
+                # Only reschedule if returning True
+                if not ret:
+                    self.timeout_remove(t_id)
+                    continue
+
+                # Reschedule
+                now2 = time.time()
+                delta = (now2 - t) % info['delay']
+                t_new = now2 + info['delay'] - delta
+                logging.debug('Rescheduling timeout %d for %s', t_id, t_new - now2)
+                bisect.insort(self._scheduled_timeouts, (t_new, t_id))
+            except Exception, e:
+                logger.error('Timeout call %d failed: %s', t_id, str(e))
+                self.timeout_remove(t_id)
+
     def main_loop(self, delay=None, wait_for=None):
         '''
         Run the receiving main loop for a maximum of <delay> msec.
@@ -1008,9 +1061,22 @@ class ZMQBackend(object):
         poller.register(self.srv, flags=zmq.POLLIN)
 
         while True:
-            socks = poller.poll(delay)
+            if len(self._scheduled_timeouts) > 0:
+                curdelay = (self._scheduled_timeouts[0][0] - time.time()) * 1000.0
+                curdelay = max(0, curdelay)
+            else:
+                curdelay = delay
+
+            socks = poller.poll(curdelay)
             if len(socks) == 0:
-                return False
+                self._run_timeouts()
+
+                # We timed out, return
+                if curdelay == delay:
+                    return False
+
+                # Poll again
+                continue
 
             # Receive message
             msgs = self.srv.recv_multipart()
