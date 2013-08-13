@@ -39,6 +39,7 @@ DEFAULT_TIMEOUT = 5000      # Timeout in msec
 SPECIAL_FUNCTIONS = (
     '__getitem__',
     '__setitem__',
+    '__contains__',
 )
 
 def ellipsize(s):
@@ -788,6 +789,12 @@ class ObjectProxy(object):
         if func is None:
             raise Exception('Object does not support indexing')
         return func(key, val)
+
+    def __contains__(self, key):
+        func = self._specials.get('__contains__', None)
+        if func is None:
+            raise Exception('Object does not implement __contains__')
+        return func(key)
 
     def __initialize(self, info):
         if info is None:
