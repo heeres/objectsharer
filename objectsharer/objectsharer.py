@@ -929,7 +929,7 @@ class ZMQBackend(object):
                 if uid in self.uid_to_sock_map:
                     del self.uid_to_sock_map[uid]
 
-    def connect_to(self, addr, delay=20, async=False, uid=None):
+    def connect_to(self, addr, delay=1000, async=False, uid=None):
         '''
         Connect to a remote ObjectSharer at <addr>.
         If <uid> is specified it is associated with the client at <addr>.
