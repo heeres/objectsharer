@@ -474,8 +474,8 @@ class ObjectSharer(object):
         if not hasattr(obj, '_OS_UID'):
             logger.warning('Trying to unregister an unknown object')
 
-        if obj._OS_UID in self._objects:
-            del self._objects[obj._OS_UID]
+        if obj._OS_UID in self.objects:
+            del self.objects[obj._OS_UID]
             root.emit('object-removed', obj._OS_UID)
 
     #####################################
