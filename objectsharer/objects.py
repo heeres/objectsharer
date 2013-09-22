@@ -20,3 +20,11 @@ class PythonInterpreter(object):
             ip = IPython.ipapi.get()
         ip.IP.code_queue.put((c, cev, rev))
 
+class EchoServer(object):
+
+    def __init__(self):
+        pass
+
+    def echo(self, msg):
+        return msg
+
