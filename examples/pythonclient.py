@@ -10,7 +10,7 @@ zbe.start_server('127.0.0.1')
 zbe.connect_to('tcp://127.0.0.1:54321')
 
 py = objsh.find_object('python_server')
+print 'Reply: %s' % py.cmd('1+1')
 
 zbe.add_qt_timer()
-
 

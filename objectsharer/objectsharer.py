@@ -48,6 +48,7 @@ OS_SIGNAL       = 'OS_SIG'
 SPECIAL_FUNCTIONS = (
     '__getitem__',
     '__setitem__',
+    '__contains__',
 )
 
 def ellipsize(s):
@@ -437,8 +438,8 @@ class ObjectSharer(object):
         if not hasattr(obj, '_OS_UID'):
             logger.warning('Trying to unregister an unknown object')
 
-        if obj._OS_UID in self._objects:
-            del self._objects[obj._OS_UID]
+        if obj._OS_UID in self.objects:
+            del self.objects[obj._OS_UID]
             root.emit('object-removed', obj._OS_UID)
 
     #####################################
@@ -756,6 +757,12 @@ class ObjectProxy(object):
             raise Exception('Object does not support indexing')
         return func(key, val)
 
+    def __contains__(self, key):
+        func = self._specials.get('__contains__', None)
+        if func is None:
+            raise Exception('Object does not implement __contains__')
+        return func(key)
+
     def __initialize(self, info):
         if info is None:
             return
@@ -903,7 +910,7 @@ class ZMQBackend(object):
             idstr += chars[random.randint(0, len(chars)-1)]
         return idstr
 
-    def connect_to(self, addr, delay=20, async=False, uid=None):
+    def connect_to(self, addr, delay=1000, async=False, uid=None):
         '''
         Connect to a remote ObjectSharer at <addr>.
         If <uid> is specified it is associated with the client at <addr>.
