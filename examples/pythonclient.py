@@ -1,5 +1,4 @@
-# ipython --pylab=qt
-# execfile('pythonclient.py')
+# ipython --pylab=qt -i pythonclient.py
 
 import logging
 logging.getLogger().setLevel(logging.DEBUG)

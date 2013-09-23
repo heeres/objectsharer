@@ -49,6 +49,8 @@ SPECIAL_FUNCTIONS = (
     '__getitem__',
     '__setitem__',
     '__contains__',
+    '__str__',
+    '__repr__',
 )
 
 def ellipsize(s):
@@ -762,6 +764,20 @@ class ObjectProxy(object):
         if func is None:
             raise Exception('Object does not implement __contains__')
         return func(key)
+
+    def __str__(self):
+        s = 'ObjectProxy for %s @ %s (address %s)' % (self._OS_UID, self._OS_SRV_ID, self._OS_SRV_ADDR)
+        func = self._specials.get('__str__', None)
+        if func:
+            s += '\nRemote info:\n%s' % (func(),)
+        return s
+
+    def __repr__(self):
+        func = self._specials.get('__str__', None)
+        s = 'ObjectProxy(%s)' % (self._OS_UID,)
+        if func:
+            s += ': %s' % (func(), )
+        return s
 
     def __initialize(self, info):
         if info is None:

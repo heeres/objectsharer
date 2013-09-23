@@ -5,6 +5,9 @@ class PythonInterpreter(object):
     def __init__(self, namespace={}):
         self._namespace = namespace
 
+    def __str__(self):
+        return 'A Python interpreter'
+
     def cmd(self, cmd):
         retval = eval(cmd, self._namespace, self._namespace)
         return retval
