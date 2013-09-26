@@ -622,6 +622,8 @@ class ObjectSharer(object):
 #            logger.debug('  Processing return for %s', callid)
             if callid in self.reply_objects:
                 self.reply_objects[callid].set(ret)
+                # We should not keep track of the reply object
+                del self.reply_objects[callid]
             else:
                 raise Exception('Reply for unkown call %s', callid)
 
