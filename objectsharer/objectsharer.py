@@ -25,7 +25,6 @@ import uuid
 import types
 import bisect
 import os
-import sys
 import traceback
 
 logger = logging.getLogger("Object Sharer")
@@ -48,6 +47,7 @@ OS_SIGNAL       = 'OS_SIG'
 SPECIAL_FUNCTIONS = (
     '__getitem__',
     '__setitem__',
+    '__delitem__',
     '__contains__',
     '__str__',
     '__repr__',
@@ -143,6 +143,9 @@ def _wrap_ars_sobjs(obj, arlist=None):
     '''
     def replace(o):
         if isinstance(o, np.ndarray):
+            if not o.flags['C_CONTIGUOUS']:
+                o = np.ascontiguousarray(o)
+            assert o.flags['C_CONTIGUOUS']
             arlist.append(o)
             return dict(
                 OS_AR=True,
@@ -443,6 +446,10 @@ class ObjectSharer(object):
         if obj._OS_UID in self.objects:
             del self.objects[obj._OS_UID]
             root.emit('object-removed', obj._OS_UID)
+
+        for name, id in self.name_map.items():
+            if obj._OS_UID == id:
+                del self.name_map[name]
 
     #####################################
     # Signal functions
@@ -760,6 +767,12 @@ class ObjectProxy(object):
         if func is None:
             raise Exception('Object does not support indexing')
         return func(key, val)
+
+    def __delitem__(self, key): #TODO: make this less copy/paste
+        func = self._specials.get('__delitem__', None)
+        if func is None:
+            raise Exception('Object does not support indexing')
+        return func(key)
 
     def __contains__(self, key):
         func = self._specials.get('__contains__', None)
