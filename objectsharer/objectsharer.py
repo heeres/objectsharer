@@ -106,11 +106,12 @@ class AsyncReply(object):
             logger.debug('Performing callback for call id %d' % self._callid)
             self.callback(val)
 
-    def get(self, block=False, delay=DEFAULT_TIMEOUT):
-        if not block:
-            return self.val
-        if not self.is_valid():
+    def get(self, block=False, delay=DEFAULT_TIMEOUT, do_raise=True):
+        if block and not self.is_valid():
             helper.interact(delay=delay)
+        if do_raise and isinstance(self.val, Exception):
+            raise self.val
+        return self.val
 
     def is_valid(self):
         return self.val_valid
@@ -268,8 +269,6 @@ class ObjectSharer(object):
         ret = self.backend.main_loop(delay=timeout, wait_for=async_reply)
         if ret:
             val = async_reply.get()
-            if isinstance(val, Exception):
-                raise val
             return val
         else:
             raise TimeoutError('Call timed out')
@@ -812,7 +811,7 @@ class ObjectProxy(object):
         return helper.connect_signal(self._OS_UID, signame, func)
 
     def disconnect(self, hid):
-        return helper.disconnect(hid)
+        return helper.disconnect_signal(hid)
 
     def os_get_client(self):
         return self._OS_SRV_ID
