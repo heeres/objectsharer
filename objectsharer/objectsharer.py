@@ -599,9 +599,9 @@ class ObjectSharer(object):
                 if len(info) < 6:
                     logger.error('Invalid call msg: %s', info)
                     ret = RemoteException('Invalid call msg')
-                elif obj is None:
+                elif 'obj' not in locals() or obj is None:
                     ret = RemoteException('Object %s not available' % objid)
-                elif func is None:
+                elif 'func' not in locals() or func is None:
                     ret = RemoteException('Object %s does not have function %s' % (objid, funcname))
                 else:
                     tb = traceback.format_exc(15)
