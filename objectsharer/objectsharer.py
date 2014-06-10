@@ -134,8 +134,8 @@ def _walk_objects(obj, func, *args):
         for i, v in enumerate(obj):
             obj[i] = _walk_objects(v, func, *args)
     if type(obj) is types.DictType:
-        for k, v in obj.iteritems():
-            obj[k] = _walk_objects(v, func, *args)
+        for k in sorted(obj):
+            obj[k] = _walk_objects(obj[k], func, *args)
     return func(obj, *args)
 
 def _wrap_ars_sobjs(obj, arlist=None):
@@ -310,6 +310,10 @@ class ObjectSharer(object):
                 else:
                     opts = {}
                 opts['__doc__'] = getattr(val, '__doc__', None)
+                try:
+                    opts['__argspec__'] = inspect.getargspec(val)
+                except:
+                    opts['__argspec__'] = None
                 funcs.append((key, opts))
             else:
                 props.append(key)
@@ -716,7 +720,19 @@ class _FunctionCall():
         else:
             self._share_options = share_options
 
-        setattr(self, '__doc__', self._share_options.get('__doc__', None))
+        # Setup doc string, including remote function name and parameters
+        doc = funcname
+        argspec = self._share_options.get('__argspec__', None)
+        if argspec:
+            doc += inspect.formatargspec(*argspec) + '\n'
+        else:
+            doc += '()\n'
+
+        docstr = self._share_options.get('__doc__', '')
+        if docstr:
+            doc += docstr
+        setattr(self, '__doc__', doc)
+
         self._cached_result = None
 
     def __call__(self, *args, **kwargs):
