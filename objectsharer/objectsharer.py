@@ -1104,7 +1104,7 @@ class ZMQBackend(object):
 
             # Set curdelay based on end time
             if endtime is not None:
-                curdelay = endtime - time.time()
+                curdelay = max(endtime - time.time(), 0)
             else:
                 curdelay = 10000
 
