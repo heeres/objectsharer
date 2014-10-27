@@ -1,5 +1,5 @@
 Python Object Sharer
-Reinier Heeres, 2013
+Reinier Heeres, 2013-2014
 
 
 
@@ -18,69 +18,89 @@ the following rules:
 (except for special functions __getitem__  and __setitem__)
 - The reply from functions decorated with '@cache_result' will be cached.
 
-The underlying communication protocol works over ZMQ socket and objects are
+The underlying communication protocol works over plain sockets; objects are
 pickled. There are two object types that are treated in a special way:
 - Shared objects will be sent as a 'reference' and proxies are created on the
 receiving side. If the receiving side is not connected to the 'server' that
 contains the object it will automatically do so.
-- Numpy arrays are not pickled, but sent in binary form over ZMQ to speed
-things up.
+- Numpy arrays are not pickled, but sent in binary form to speed things up.
+
+Clients/servers are identified by a uid at the objectsharer level (i.e. their
+RootObject). When shareable objects are exchanged, both the server uid and the
+server address are passed around, as the remote client should know how to
+connect to the relevant server. At the backend level, socket objects play an
+important role as well, as they are used to actually send data around.
 
 
 
-Threading
+Resolving objects
 
-ZMQ sockets are not thread-safe; therefore currently all ObjectSharer related
-code should live in the same thread. If heavy work needs to be done a worker thread should be spawned.
+- Each object is identified by a uid
+- When registering an object using register() a name can be specified which
+can be used as an alias when calling get_object().
+- get_object_from() can be used to look for an object (by uid or alias) on
+a specific client. It will by default use a local cache for proxies.
+- find_object() looks for an object with by uid or alias on any connected
+client. (By calling get_object_from() on each client, if not found in cache).
 
 
 
 Underlying protocol details
 
-- Messages are exchanged using zmq sockets. Every ObjectSharer instance has
-one socket of type ROUTER for all incoming messages. For every client it
-wants to talk to it has a socket of type DEALER.
+Message structure
 
-- There is really no distinction between clients and servers; everyone can
-talk to everyone and communication is bi-directional. However, we stick to
-the nomenclature where the client is the one initiating the connection. When
-a client connects to a server it sends the "hello_from" message. The server
-directly sets up a reverse connection and sends the "hello_from" message as
-well. Both instances then try to retrieve the "root" object from the other
-party. In case of the 'client' we wait for this process to finish, whereas for
-the server we let this happen asynchronously.
+- Magic, 'OS'
+- Full packet size, 4 bytes
+- Number of parts, 1 byte
+- For each part:
+  - size, 4 bytes
+    - data
 
-- Each message is a multipart message. The first item identifies the client
-(inserted by zmq). The second part is a pickled python object to describe
-the message. Extra parts may be provided containing raw data for more
-efficient transport, for example for numpy arrays.
+- The first message part is the pickled python object describing the message.
+It should be a tuple and the first item identifies the message type:
 
-- The pickled python object should be a tuple. The first item identifies the
-message type:
-
-    'call': further items:
+    Call, 'c': further items:
         <callid>:
-        <object name>:
+        <object uid>: binary uid
         <function name>:
         <args>: if this contains numpy arrays their content will be available
                 in an extra message part.
         <kwargs>: keyword arguments, if this contains numpy arrays content
                   will be available in extra message parts.
 
-    'signal': further items:
-        <object name>:
+    Signal, 's': further items:
+        <object uid>: binary uid
         <signal name>:
         <args>: if this contains numpy arrays their content will be available
                 in an extra message part.
         <kwargs>: if this contains numpy arrays their content will be available
                 in an extra message part.
 
-    'return': further items:
+    Return, 'r': further items:
         <callid>:
         <reply>: if this contains numpy arrays their content will be available
                  in an extra message part.
 
-Extra message parts are provided in the following order:
+Extra message parts contain binary data of, for example, numpy arrays and are
+provided in the following order:
 - Tuples are traversed depth-first.
-- Dictionaries are traversed through iteritems, which should result in same-
+- Dictionaries are traversed through items(), which should result in same-
 ordered traversion for the same elements.
+
+
+Hand-shaking
+- the 'client' initiating the connection sends a 'hello_from' message
+- the 'server' replies a 'hello_reply' message, and requests the root object
+right after.
+- the 'client' requests the root object
+
+
+
+Socket backend details
+- Sockets are polled using the poll() call, and the main_loop in backend.py
+calls recv_from() once data appears to be available. This places the newly
+received data in a receive buffer and returns all the complete messages that
+were received.
+- send_data_to() is called when data is to be sent. It is placed in a buffer
+and flush_send_queue() is called, which tries to send as much data as possible.
+
