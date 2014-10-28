@@ -28,17 +28,31 @@ import os
 import traceback
 import misc
 
+# The pickle protocol used; 0 for ASCII, 2 for binary; quite a bit smaller.
+PICKLE_PROTO = pickle.HIGHEST_PROTOCOL
+
+# Whether to wrap numpy arrays and transfer the .data object in a binary way
+# as a separate message part. From profiling it seems to save cpu time, but
+# in real life it does not result in a very big improvement.
+WRAP_NPARRAYS = True
+
+# We have the extra DEBUG flag because not doing the logger.debug calls gives
+# a significant speed-up
+DEBUG = False
+if DEBUG:
+    LOGLEVEL = logging.DEBUG
+else:
+    LOGLEVEL = logging.INFO
+
 logger = logging.getLogger("Object Sharer")
-logger.setLevel(logging.DEBUG)
+logger.setLevel(LOGLEVEL)
 handler = logging.StreamHandler()
 formatter = logging.Formatter('%(name)s:%(levelname)s:%(message)s')
-handler.setLevel(logging.DEBUG)
+handler.setLevel(LOGLEVEL)
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 DEFAULT_TIMEOUT = 5000      # Timeout in msec
-REDUCE_LATENCY  = True      # Use Voodoo latency reduction?
-
 OS_CALL         = 'c'
 OS_RETURN       = 'r'
 OS_SIGNAL       = 'OS_SIG'
@@ -92,11 +106,12 @@ class AsyncReply(object):
         self.val = val
         self.val_valid = True
         if self.callback is not None:
-            logger.debug('Performing callback for call id %d' % self._callid)
+            if DEBUG:
+                logger.debug('Performing callback for call id %d' % self._callid)
             try:
                 self.callback(val)
             except Exception, e:
-                logging.warning('Callback failed: %s', str(e))
+                logging.warning('Callback for call %s failed: %s', self._callid, str(e))
 
     def get(self, block=False, delay=DEFAULT_TIMEOUT, do_raise=True):
         if block and not self.is_valid():
@@ -114,11 +129,12 @@ class AsyncReply(object):
 #########################################
 
 def _walk_objects(obj, func, *args):
-    if type(obj) in (types.ListType, types.TupleType):
+    t = type(obj)
+    if t in (types.ListType, types.TupleType):
         obj = list(obj)
         for i, v in enumerate(obj):
             obj[i] = _walk_objects(v, func, *args)
-    if type(obj) is types.DictType:
+    if t is types.DictType:
         for k in sorted(obj):
             obj[k] = _walk_objects(obj[k], func, *args)
     return func(obj, *args)
@@ -132,20 +148,18 @@ def _wrap_ars_sobjs(obj, arlist=None):
             if not o.flags['C_CONTIGUOUS']:
                 o = np.ascontiguousarray(o)
             assert o.flags['C_CONTIGUOUS']
-            arlist.append(o.buffer)
+            arlist.append(o.data)
             return dict(
                 OS_AR=True,
-                shape=o.shape,
-                dtype=o.dtype,
+                s=o.shape,
+                t=o.dtype,
             )
         elif hasattr(o, '_OS_UID'):
-            ret = dict(OS_UID=o._OS_UID.bytes)
+            ret = dict(OS_UID=o._OS_UID.b)
             if hasattr(o, '_OS_SRV_ID'):    # Not a local object
                 ret['OS_SRV_ID'] = o._OS_SRV_ID
                 ret['OS_SRV_ADDR'] = o._OS_SRV_ADDR
             return ret
-#        elif isinstance(o, ObjectProxy):
-#            raise ValueError('ObjectProxy without OS_UID')
         return o
 
     if arlist is None:
@@ -169,12 +183,11 @@ def _unwrap_ars_sobjs(obj, bufs, client=None):
                     raise ValueError('No buffer!')
                 ar = np.frombuffer(
                     bufs.pop(0),
-                    dtype=o['dtype']
+                    dtype=o['t']
                 )
-                ar = ar.reshape(o['shape'])
+                ar = ar.reshape(o['s'])
                 return ar
             if 'OS_UID' in o:
-                o['OS_UID'] = uuid.UUID(bytes=o['OS_UID'])
                 if 'OS_SRV_ID' in o and 'OS_SRV_ADDR' in o:
                     return helper.get_object_from(o['OS_UID'], o['OS_SRV_ID'], o['OS_SRV_ADDR'])
                 else:
@@ -183,6 +196,50 @@ def _unwrap_ars_sobjs(obj, bufs, client=None):
 
     obj = _walk_objects(obj, replace)
     return obj, bufs
+
+def _wrap_sobjs(obj, arlist=None):
+    '''
+    Function to shared objects only.
+    '''
+    def replace(o):
+        if hasattr(o, '_OS_UID'):
+            ret = dict(OS_UID=o._OS_UID.b)
+            if hasattr(o, '_OS_SRV_ID'):    # Not a local object
+                ret['OS_SRV_ID'] = o._OS_SRV_ID
+                ret['OS_SRV_ADDR'] = o._OS_SRV_ADDR
+            return ret
+        return o
+
+    if arlist is None:
+        arlist = []
+    try:
+        obj = _walk_objects(obj, replace)
+        return obj, arlist
+    except:
+        return obj, arlist
+
+def _unwrap_sobjs(obj, bufs, client=None):
+    '''
+    Function to unwrap shared objects only.
+    '''
+
+    def replace(o):
+        if type(o) is types.DictType and 'OS_UID' in o:
+            if 'OS_SRV_ID' in o and 'OS_SRV_ADDR' in o:
+                return helper.get_object_from(o['OS_UID'], o['OS_SRV_ID'], o['OS_SRV_ADDR'])
+            else:
+                return helper.get_object_from(o['OS_UID'], client)
+        return o
+
+    obj = _walk_objects(obj, replace)
+    return obj, bufs
+
+if WRAP_NPARRAYS:
+    _wrap = _wrap_ars_sobjs
+    _unwrap = _unwrap_ars_sobjs
+else:
+    _wrap = _wrap_sobjs
+    _unwrap = _unwrap_sobjs
 
 #########################################
 # Object sharer core
@@ -232,20 +289,21 @@ class ObjectSharer(object):
         callid = self._last_call_id
         async_reply = AsyncReply(callid, callback=callback)
         self.reply_objects[callid] = async_reply
-        logger.debug('Sending call %d to %s: %s.%s(%s,%s), async=%s', callid, client, objuid, func_name, misc.ellipsize(str(args)), misc.ellipsize(str(kwargs)), async)
+        if DEBUG:
+            logger.debug('Sending call %d to %s: %s.%s(%s,%s), async=%s', callid, client, objuid, func_name, misc.ellipsize(str(args)), misc.ellipsize(str(kwargs)), async)
 
-        args, arlist = _wrap_ars_sobjs(args)
-        kwargs, arlist = _wrap_ars_sobjs(kwargs, arlist)
+        args, arlist = _wrap(args)
+        kwargs, arlist = _wrap(kwargs, arlist)
         msg = (
             OS_CALL,
             callid,
-            objuid.bytes,
+            objuid.b,
             func_name,
             args,
             kwargs
         )
         try:
-            msg = pickle.dumps(msg)
+            msg = pickle.dumps(msg, PICKLE_PROTO)
         except:
             raise Exception('Unable to pickle function call: %s' % str(msg))
         arlist.insert(0, msg)
@@ -281,14 +339,8 @@ class ObjectSharer(object):
         '''
 
         # Direct uid look-up
-        if isinstance(objid, uuid.UUID):
+        if isinstance(objid, misc.UID):
             return self.objects.get(objid, None)
-
-        # Check if binary version of uid
-        if len(objid) == 16:
-            obj_uid = uuid.UUID(bytes=objid)
-            if obj_uid in self.objects:
-                return self.objects[objid]
 
         # Look-up alias in name_map
         objid = self.name_map.get(objid, objid)
@@ -331,7 +383,7 @@ class ObjectSharer(object):
 
         props, funcs = self._get_object_shared_props_funcs(obj)
         info = dict(
-            uid=obj._OS_UID,
+            uid=obj._OS_UID.b,
             properties=props,
             functions=funcs
         )
@@ -430,7 +482,7 @@ class ObjectSharer(object):
             logger.warning('Object %s already registered' % obj._OS_UID)
             return
 
-        obj._OS_UID = uuid.uuid4()
+        obj._OS_UID = misc.UID(bytes=uuid.uuid4().bytes)
         logging.info('New object (alias %s) with UID %s registered', name, obj._OS_UID)
         if name is not None:
             if name in self.name_map:
@@ -442,7 +494,7 @@ class ObjectSharer(object):
 
         obj._OS_emit = getattr(obj, 'emit', None)
         # TODO: make obj properly assigned
-        obj.emit = lambda signal, *args, **kwargs: self.emit_signal(obj._OS_UID, signal, *args, **kwargs)
+        obj.emit = lambda signal, *args, **kwargs: self.emit_signal(obj._OS_UID.b, signal, *args, **kwargs)
         obj.connect = lambda signame, callback, *args, **kwargs: self.connect_signal(obj._OS_UID, signame, callback, *args, **kwargs)
         self.objects[obj._OS_UID] = obj
 
@@ -498,7 +550,9 @@ class ObjectSharer(object):
                     break
 
     def emit_signal(self, uid, signame, *args, **kwargs):
-        logger.debug('Emitting %s(%r, %r) for %s to %d clients',
+        uid = misc.UID(uid)
+        if DEBUG:
+            logger.debug('Emitting %s(%r, %r) for %s to %d clients',
                 signame, args, kwargs, uid, len(self.clients))
 
         kwargs[OS_SIGNAL] = True
@@ -509,7 +563,8 @@ class ObjectSharer(object):
 
     def receive_signal(self, uid, signame, *args, **kwargs):
         kwargs.pop(OS_SIGNAL, None)
-        logger.debug('Received signal %s(%r, %r) from %s',
+        if DEBUG:
+            logger.debug('Received signal %s(%r, %r) from %s',
                 signame, args, kwargs, uid)
 
         ncalls = 0
@@ -530,7 +585,8 @@ class ObjectSharer(object):
                             info.get('callback', None), uid, signame, str(e), traceback.format_exc())
 
         end = time.time()
-        logger.debug('Did %d callbacks in %.03fms for sig %s',
+        if DEBUG:
+            logger.debug('Did %d callbacks in %.03fms for sig %s',
                 ncalls, (end - start) * 1000, signame)
 
     #####################################
@@ -544,7 +600,8 @@ class ObjectSharer(object):
     def _add_client_to_list(self, uid, root_info):
         if root_info is None:
             raise Exception('Unable to retrieve root object from %s' % uid)
-        logger.debug('  root@%s.get_object_info() reply: %s', uid, root_info)
+        if DEBUG:
+            logger.debug('  root@%s.get_object_info() reply: %s', uid, root_info)
         self.clients[uid] = ObjectProxy(uid, root_info)
         self.clients[uid].list_objects(callback=lambda reply, uid=uid:
             self._update_client_object_list(uid, reply))
@@ -578,7 +635,8 @@ class ObjectSharer(object):
         # Decode message
         try:
             info = pickle.loads(msg.parts[0])
-            logger.debug('Msg %s from %s: %s', info[0], msg.sender_uid, info)
+            if DEBUG:
+                logger.debug('Msg %s from %s: %s', info[0], msg.sender_uid, info)
         except Exception, e:
             logger.warning('Unable to decode object: %s [%r]', str(e), msg.parts[0])
             return
@@ -588,7 +646,7 @@ class ObjectSharer(object):
             try:
 #            if 1:
                 (callid, objid, funcname, args, kwargs) = info[1:6]
-                objid = uuid.UUID(bytes=objid)
+                objid = misc.UID(bytes=objid)
                 sig = kwargs.get(OS_SIGNAL, False)
 
                 # Store signals if waiting a reply or event
@@ -597,10 +655,11 @@ class ObjectSharer(object):
                     return
 
                 # Unwrap arguments
-                args, bufs = _unwrap_ars_sobjs(args, msg.parts[1:], msg.sender_uid)
-                kwargs, bufs = _unwrap_ars_sobjs(kwargs, msg.parts[1:], msg.sender_uid)
+                args, bufs = _unwrap(args, msg.parts[1:], msg.sender_uid)
+                kwargs, bufs = _unwrap(kwargs, msg.parts[1:], msg.sender_uid)
 
-                logger.debug('  Processing call %s: %s.%s(%s,%s)', callid, objid, funcname, args, kwargs)
+                if DEBUG:
+                    logger.debug('  Processing call %s: %s.%s(%s,%s)', callid, objid, funcname, args, kwargs)
 
                 # Call function
                 obj = self.get_object(objid)
@@ -612,8 +671,9 @@ class ObjectSharer(object):
                     return
 
                 # Wrap return value
-                ret, bufs = _wrap_ars_sobjs(ret)
-                logger.debug('  Returning for call %s: %s', callid, misc.ellipsize(str(ret)))
+                ret, bufs = _wrap(ret)
+                if DEBUG:
+                    logger.debug('  Returning for call %s: %s', callid, misc.ellipsize(str(ret)))
 
             # Handle errors
             except Exception, e:
@@ -631,23 +691,23 @@ class ObjectSharer(object):
 
             # Prepare return packet
             try:
-                reply = [pickle.dumps((OS_RETURN, callid, ret))]
+                reply = [pickle.dumps((OS_RETURN, callid, ret), PICKLE_PROTO)]
                 reply.extend(bufs)
             except:
                 ret = misc.RemoteException('Unable to pickle return %s' % str(ret))
-                reply = [pickle.dumps((OS_RETURN, callid, ret))]
+                reply = [pickle.dumps((OS_RETURN, callid, ret), PICKLE_PROTO)]
             self.backend.send_msg(msg.sender_uid, reply)
 
         elif info[0] == OS_RETURN:
             if len(info) < 3:
-                logger.debug('Invalid call msg')
                 return Exception('Invalid return msg')
 
             # Get call id and unwrap return value
             callid, ret = info[1:3]
-            ret, bufs = _unwrap_ars_sobjs(ret, msg.parts[1:], msg.sender_uid)
+            ret, bufs = _unwrap(ret, msg.parts[1:], msg.sender_uid)
 
-            logger.debug('  Processing return for %s: %s', callid, ret)
+            if DEBUG:
+                logger.debug('  Processing return for %s: %s', callid, ret)
             if callid in self.reply_objects:
                 self.reply_objects[callid].set(ret)
                 # We should not keep track of the reply object
@@ -656,47 +716,52 @@ class ObjectSharer(object):
                 raise Exception('Reply for unkown call %s', callid)
 
         elif info[0] == 'hello_from':
-            msg.sender_uid = uuid.UUID(bytes=info[1])
+            msg.sender_uid = misc.UID(bytes=info[1])
             from_addr = info[2]
             logger.debug('hello_from client %s with server @ %s', msg.sender_uid, from_addr)
             self.backend.connect_from(msg.sock, msg.sender_uid, from_addr)
 # This was necessary for ZMQ sockets
 #            if not self.backend.connected_to(msg.sender_uid):
-#                logger.debug('Initiating reverse connection...')
+#                if DEBUG:logger.debug('Initiating reverse connection...')
 #                self.backend.connect_to(from_addr, msg.sender_uid)
-            logger.debug('Sending hello_reply')
-            reply = ('hello_reply', self.root_uid.bytes, self.backend.get_server_address())
-            self.backend.send_msg(msg.sender_uid, [pickle.dumps(reply)])
+            if DEBUG:
+                logger.debug('Sending hello_reply')
+            reply = ('hello_reply', self.root_uid.b, self.backend.get_server_address())
+            self.backend.send_msg(msg.sender_uid, [pickle.dumps(reply, PICKLE_PROTO)])
             self.request_client_proxy(msg.sender_uid, async=True)
 
         elif info[0] == 'hello_reply':
-            msg.sender_uid = uuid.UUID(bytes=info[1])
+            msg.sender_uid = misc.UID(bytes=info[1])
             from_addr = info[2]
-            logger.debug('hello_reply client %s with server @ %s', msg.sender_uid, from_addr)
+            if DEBUG:
+                logger.debug('hello_reply client %s with server @ %s', msg.sender_uid, from_addr)
             self.backend.connect_from(msg.sock, msg.sender_uid, from_addr)
             self.request_client_proxy(msg.sender_uid, async=True)
 
         elif info[0] == 'goodbye_from':
-            logger.debug('Goodbye client %s from %s', msg.sender_uid, info[1])
+            if DEBUG:
+                logger.debug('Goodbye client %s from %s', msg.sender_uid, info[1])
             forget_uid = self.backend.get_uid_for_addr(info[1])
             if forget_uid in self.clients:
                 del self.clients[forget_uid]
-                logger.debug('deleting client %s', forget_uid)
+                if DEBUG:
+                    logger.debug('deleting client %s', forget_uid)
             self.backend.forget_connection(info[1], remote=False)
             if msg.sender_uid in self.clients:
                 del self.clients[msg.sender_uid]
-                logger.debug('deleting client %s', msg.sender_uid)
+                if DEBUG:
+                    logger.debug('deleting client %s', msg.sender_uid)
 
         # Ping - pong to check alive
         elif info[0] == 'ping':
-            logger.debug('PING')
-            msg = pickle.pickle(('pong',))
+            logger.info('PING from %s', msg.sender_uid)
+            msg = pickle.pickle(('pong',), PICKLE_PROTO)
             self.backend.send_msg(msg.sender_uid, [msg])
         elif info[0] == 'pong':
-            logger.debug('PONG')
+            logger.info('PONG from %s', msg.sender_uid)
 
         else:
-            logger.debug('Unknown msg: %s', info)
+            logger.warning('Unknown msg: %s', info)
 
     def flush_queue(self, nmax=5):
         '''
@@ -793,7 +858,7 @@ class ObjectProxy(object):
             return super(ObjectProxy, cls).__new__(client, uid, info, newinst)
 
     def __init__(self, client, info):
-        self._OS_UID = info['uid']
+        self._OS_UID = misc.UID(bytes=info['uid'])
         self._OS_SRV_ID = client
         self._OS_SRV_ADDR = helper.backend.get_addr_for_uid(client)
         self.__new_hid = 1

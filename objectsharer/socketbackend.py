@@ -1,5 +1,4 @@
 import socket
-import logging
 import time
 import select
 import backend
@@ -28,7 +27,7 @@ class SocketBackend(backend.Backend):
         logger.debug('Connecting to %s', addr)
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.connect(backend.parse_addr(addr))
-        logging.debug('Adding socket %s to select_socks', sock)
+        logger.debug('Adding socket %s to select_socks', sock)
         self._select_socks.append(sock)
         return sock
 
@@ -41,7 +40,7 @@ class SocketBackend(backend.Backend):
         try:
             rsocks, wlist, xlist = select.select(self._select_socks, [], [], timeout/1000.0)
         except Exception, e:
-            logging.warning('select failed: %s, timeout %s, checking sockets', str(e), timeout)
+            logger.warning('select failed: %s, timeout %s, checking sockets', str(e), timeout)
             for s in self._select_socks:
                 print 'Sock: %s (%d)' % (s, s.fileno())
             return []
@@ -49,7 +48,7 @@ class SocketBackend(backend.Backend):
         # Handle incoming connections
         if self._srv_sock in rsocks:
             clt_sock, clt_addr = self._srv_sock.accept()
-            logging.debug('Accepted new socket, adding %s to select_socks', clt_sock.fileno())
+            logger.debug('Accepted new socket, adding %s to select_socks', clt_sock.fileno())
             self._select_socks.append(clt_sock)
 
             # Remove srv_sock from the list to read from
@@ -70,7 +69,7 @@ class SocketBackend(backend.Backend):
             ret = sock.send(data)
         except socket.error, e:
             if e.errno not in (10035, ):
-                logging.warning('Send exception (%s), assuming client disconnected', e)
+                logger.warning('Send exception (%s), assuming client disconnected', e)
                 self.client_disconnected(sock)
                 return -1
             ret = 0
@@ -104,16 +103,16 @@ class SocketBackend(backend.Backend):
                 if nsent == len(datalist[0]):
                     del datalist[0]
 
-                # Failed, signals dissockection so remove send queue
+                # Failed, signals disconnection so remove send queue
                 elif nsent == -1:
                     del self._send_queue[sock]
-                    logging.info('Sending failed, assuming dissockect')
-                    self.client_dissockected(sock)
+                    logger.info('Sending failed, assuming disconnect')
+                    self.client_disconnected(sock)
 
                 # Partially sent, remove that part from queue
                 else:
                     datalist[0] = datalist[0][nsent:]
-                    logging.info('Sent paritally, %d bytes remaining', len(datalist[0]))
+                    logger.info('Sent paritally, %d bytes remaining', len(datalist[0]))
                     break
 
         return True
@@ -145,60 +144,64 @@ class SocketBackend(backend.Backend):
     def get_server_address(self):
         return 'tcp://%s:%s' % (self.addr, self.port)
 
-    def _check_rcv_buf(self, sock):
-        # Grab complete packet if available
-        b = self._rcv_bufs[sock]
+    def _consume_msg_buf(self, sock, b):
+        ''''
+        Comsume messages from buffer <b>
+        Return tuple of <msg list>, <consumed byes>
+        '''
+        ofs = 0
         ret = []
-        while len(b) > 7:
+        blen = len(b)
+        while (ofs + 7) < blen:
             # Check packet magic
-            if b[0:2] != 'OS':
-                del self._rcv_bufs[sock]
-                logging.warning('Packet magic missing, dropping data')
-                return ret
+            if b[ofs:ofs+2] != 'OS':
+                logger.warning('Packet magic missing, dropping data')
+                return ret, -1
 
-            # Get data length
-#            datalen = (ord(b[2]) << 24) + (ord(b[3]) << 16) + (ord(b[4]) << 8)  + ord(b[5])
-            datalen = struct.unpack('<I', b[2:6])[0]
-            if len(b) < datalen:
+            datalen, nparts = struct.unpack('<IB', b[ofs+2:ofs+7])
+            if (ofs + datalen) > blen:
 #                logging.debug('Incomplete packet received (expecting %s, got %s)', datalen, len(b))
-                return ret
+                return ret, ofs
 
             # Get message parts
-            nparts = ord(b[6])
+            ofs += 7
             parts = []
-            ofs = 7
             for i in range(nparts):
-#                partlen = (ord(b[ofs]) << 24) + (ord(b[ofs+1]) << 16) + (ord(b[ofs+2]) << 8)  + ord(b[ofs+3])
                 partlen = struct.unpack('<I', b[ofs:ofs+4])[0]
-                if ofs + 4 + partlen > len(b):
+                if ofs + 4 + partlen > blen:
                     logging.warning('Packet size problem, dropping data')
-                    del self._rcv_bufs[sock]
-                    return ret
+                    return ret, -1
                 parts.append(b[ofs+4:ofs+4+partlen])
                 ofs += 4 + partlen
 
             # Remove packet from buffer
-            b = b[datalen:]
-            self._rcv_bufs[sock] = b
-            msg = backend.Message(sock, self.sock_to_uid_map.get(sock, None), parts)
-            ret.append(msg)
-        return ret
+            ret.append(backend.Message(sock, self.sock_to_uid_map.get(sock, None), parts))
+
+        return ret, ofs
 
     def recv_from(self, sock):
         try:
             data = sock.recv(BUFSIZE)
         except Exception, e:
-            logging.warning('Recv exception (%s), assuming client disconnected', e)
+            logger.warning('Recv exception (%s), assuming client disconnected', e)
             self.client_disconnected(sock)
             return None
             
         if data == '':
-            logging.warning('Empty recv on blocking call, assuming client disconnected')
+            logger.warning('Empty recv on blocking call, assuming client disconnected')
             self.client_disconnected(sock)
             return None
-        if sock not in self._rcv_bufs:
-            self._rcv_bufs[sock] = data
-        else:
-            self._rcv_bufs[sock] += data
 
-        return self._check_rcv_buf(sock)
+        if sock not in self._rcv_bufs:
+            ret, ofs = self._consume_msg_buf(sock, data)
+            if ofs != len(data) and ofs != -1:
+                self._rcv_bufs[sock] = data[ofs:]
+        else:
+            data = self._rcv_bufs[sock] + data
+            ret, ofs = self._consume_msg_buf(sock, data)
+            if ofs == len(data) or ofs == -1:
+                del self._rcv_bufs[sock]
+            else:
+                self._rcv_bufs[sock] = data[ofs:]
+
+        return ret
