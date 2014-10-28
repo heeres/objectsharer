@@ -28,12 +28,7 @@ import os
 import traceback
 
 logger = logging.getLogger("Object Sharer")
-logger.setLevel(logging.INFO)
-handler = logging.StreamHandler()
-formatter = logging.Formatter('%(name)s:%(levelname)s:%(message)s')
-handler.setLevel(logging.WARNING)
-handler.setFormatter(formatter)
-logger.addHandler(handler)
+logger.setLevel(logging.DEBUG)
 
 DEFAULT_TIMEOUT = 5000      # Timeout in msec
 REDUCE_LATENCY  = True      # Use Voodoo latency reduction?
@@ -646,7 +641,7 @@ class ObjectSharer(object):
                 self.request_client_proxy(from_uid, async=True)
             return
 
-        if info[0] == 'goodbye_from':
+        elif info[0] == 'goodbye_from':
             logger.debug('Goodbye client %s from %s', from_uid, info[1])
             forget_uid = self.backend.get_uid_for_addr(info[1])
             if forget_uid in self.clients:
@@ -659,7 +654,7 @@ class ObjectSharer(object):
             return
 
         # Ping - pong to check alive
-        if info[0] == 'ping':
+        elif info[0] == 'ping':
             logger.debug('PING')
             msg = pickle.pickle(('pong',))
             self.backend.send_to(from_uid, msg)
@@ -1010,7 +1005,7 @@ class ZMQBackend(object):
             raise Exception('Unable to resolve destination %s' % dest)
 
         if bufs is None:
-            sock.send(msg)
+            sock.send(msg, zmq.NOBLOCK)
         else:
             msg = [msg, ]
             msg.extend(bufs)
