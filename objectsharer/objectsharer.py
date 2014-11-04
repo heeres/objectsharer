@@ -16,15 +16,12 @@
 # Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 import logging
-import random
 import cPickle as pickle
 import time
 import numpy as np
 import inspect
 import uuid
 import types
-import bisect
-import os
 import traceback
 import misc
 
@@ -624,9 +621,7 @@ class ObjectSharer(object):
     def process_message(self, msg, waiting=False):
         '''
         Process a remote message.
-        <from_uid> identifies the client that sent the message
-        <info> is the message tuple
-        <bufs> contains extra buffers used to unwrap numpy arrays
+        <msg> is a backend.Message object
 
         If <waiting> is True it indicates a main loop is waiting for something,
         in which case signals get queued.
@@ -651,7 +646,7 @@ class ObjectSharer(object):
 
                 # Store signals if waiting a reply or event
                 if waiting and sig:
-                    self._signal_queue.append((msg.sender_uid, info, msg.parts[1:]))
+                    self._signal_queue.append(msg)
                     return
 
                 # Unwrap arguments
@@ -770,8 +765,8 @@ class ObjectSharer(object):
         '''
         i = 0
         while i < nmax and len(self._signal_queue) > 0:
-            from_uid, info, bufs = self._signal_queue.pop(0)
-            self.process_message(from_uid, info, bufs)
+            msg = self._signal_queue.pop(0)
+            self.process_message(msg)
             i += 1
         return (len(self._signal_queue) == 0)
 

@@ -12,6 +12,8 @@ class SocketBackend(backend.Backend):
 
     def __init__(self, helper):
         super(SocketBackend, self).__init__(helper)
+        self.addr = None
+        self.port = None
         self._srv_sock = None
         self._select_socks = list()
         self._rcv_bufs = dict()
@@ -142,12 +144,14 @@ class SocketBackend(backend.Backend):
         logger.debug('ObjectSharer listening at %s', self.get_server_address())
 
     def get_server_address(self):
+        if self.addr is None:
+            raise Exception("Server is not started")
         return 'tcp://%s:%s' % (self.addr, self.port)
 
     def _consume_msg_buf(self, sock, b):
         ''''
         Comsume messages from buffer <b>
-        Return tuple of <msg list>, <consumed byes>
+        Return tuple of <msg list>, <consumed bytes>
         '''
         ofs = 0
         ret = []
@@ -169,7 +173,7 @@ class SocketBackend(backend.Backend):
             for i in range(nparts):
                 partlen = struct.unpack('<I', b[ofs:ofs+4])[0]
                 if ofs + 4 + partlen > blen:
-                    logging.warning('Packet size problem, dropping data')
+                    logger.warning('Packet size problem, dropping data')
                     return ret, -1
                 parts.append(b[ofs+4:ofs+4+partlen])
                 ofs += 4 + partlen

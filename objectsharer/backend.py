@@ -1,16 +1,14 @@
 # backend.py, Reinier Heeres 2014
 # Basic funcitons for objectsharer backends
-
-import socket
 import logging
 import time
-import select
-import uuid
 import types
 import pickle
 import traceback
 import misc
 import struct
+import bisect
+
 
 logger = None
 
@@ -60,6 +58,9 @@ class Message(object):
         self.sender_uid = sender_uid
         self.parts = parts
 
+    def __repr__(self):
+        return "Message({},{},{})".format(self.sock, self.sender_uid, self.parts)
+
 class Backend(object):
     '''
     General objectsharer backend code.
@@ -99,6 +100,12 @@ class Backend(object):
         Return whether we are connected to client identified by <uid>.
         '''
         return uid in self.uid_to_sock_map
+
+    def connected_to_addr(self, addr):
+        '''
+        Return whether we are connected to client at <addr>.
+        '''
+        return self.connected_to(self.get_uid_for_addr(addr))
 
     def get_uid_for_addr(self, addr):
         '''
@@ -344,7 +351,6 @@ class Backend(object):
 
         # If nothing to wait for, flush signal queue
         else:
-#            logging.debug('Flushing signal queue')
             self.helper.flush_queue()
 
         while True:
