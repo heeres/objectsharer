@@ -385,9 +385,22 @@ class Backend(object):
                 if msgs is None:
                     continue
 
+                get_new_sid = False
+                new_sid = None
                 for msg in msgs:
                     try:
+                        # Ok, this is pretty kludgey
+                        if msg.sender_uid is None:
+                            if new_sid is None:
+                                get_new_sid = True
+                            else:
+                                msg.sender_uid = new_sid
+
                         self.helper.process_message(msg, waiting=waiting)
+
+                        if get_new_sid:
+                            if msg.sender_uid is not None:
+                                new_sid = msg.sender_uid
                     except Exception, e:
                         logger.warning('Failed to process message: %s\n%s', str(e), traceback.format_exc())
 
