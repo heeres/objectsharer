@@ -397,7 +397,12 @@ class ObjectSharer(object):
             if client_addr is None:
                 logger.warning('Object from unknown client requested')
                 return None
-            logger.info('Object %s requested from unconnected client %s @ %s, connecting...', objid, client_id, client_addr)
+            try:
+                objid.encode('ascii')
+                objid_s = objid
+            except UnicodeError:
+                objid_s = str(misc.UID(objid))
+            logger.info('Object %s requested from unconnected client %s @ %s, connecting...', objid_s, client_id, client_addr)
             self.backend.connect_to(client_addr, uid=client_id)
 
         # We should be connected now
