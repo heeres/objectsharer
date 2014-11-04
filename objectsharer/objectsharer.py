@@ -14,6 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+from collections import defaultdict
 
 import logging
 import cPickle as pickle
@@ -619,6 +620,13 @@ class ObjectSharer(object):
             self.call(uid, uid, 'get_object_info', 'root', callback=lambda reply, uid=uid:
                 self._add_client_to_list(uid, reply))
 
+    def client_disconnected(self, uid):
+        logger.info("Client %s disconnected, remove from clients map")
+        del self.clients[uid]
+        for p in ObjectProxy.uid_to_proxy_map[uid]:
+            p._client_disconnected()
+        del ObjectProxy.uid_to_proxy_map[uid]
+
     #####################################
     # Message processing
     #####################################
@@ -849,6 +857,7 @@ class ObjectProxy(object):
     '''
 
     PROXY_CACHE = {}
+    uid_to_proxy_map = defaultdict(lambda: [])
     def __new__TODO(cls, client, uid, info=None, newinst=False):
         if info is None:
             return None
@@ -861,9 +870,11 @@ class ObjectProxy(object):
         self._OS_UID = misc.UID(bytes=info['uid'])
         self._OS_SRV_ID = client
         self._OS_SRV_ADDR = helper.backend.get_addr_for_uid(client)
+        ObjectProxy.uid_to_proxy_map[self._OS_SRV_ID].append(self)
         self.__new_hid = 1
         self._specials = {}
         self.__initialize(info)
+        self._disconnect_actions = []
 
     def __getitem__(self, key):
         func = self._specials.get('__getitem__', None)
@@ -922,6 +933,17 @@ class ObjectProxy(object):
 
     def disconnect(self, hid):
         return helper.disconnect_signal(hid)
+
+    def on_disconnect(self, fn):
+        """
+        Run <fn> when the client this is proxied from is disconnected
+        """
+        self._disconnect_actions.append(fn)
+
+    def _client_disconnected(self):
+        logger.info("client server to %s lost, running %d actions" % (self, len(self._disconnect_actions)))
+        for fn in self._disconnect_actions:
+            fn()
 
     def os_get_client(self):
         return self._OS_SRV_ID

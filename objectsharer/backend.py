@@ -141,8 +141,9 @@ class Backend(object):
         logging.info('Removing client %s', uid)
         if uid is None:
             return
-        self.uid_to_addr_map.pop(uid, None)
+        addr = self.uid_to_addr_map.pop(uid, None)
         self.uid_to_sock_map.pop(uid, None)
+        self.addr_to_uid_map.pop(addr, None)
 
     def connect_check(self, addr, uid):
         '''

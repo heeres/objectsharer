@@ -1,5 +1,4 @@
 import socket
-import time
 import select
 import backend
 import struct
@@ -83,6 +82,10 @@ class SocketBackend(backend.Backend):
             if isock == sock:
                 del self._select_socks[i]
                 break
+
+        uid = self.sock_to_uid_map[sock]
+        self.helper.client_disconnected(uid)
+
         super(SocketBackend, self).client_disconnected(sock)
 
     def flush_send_queue(self, sock=None):
