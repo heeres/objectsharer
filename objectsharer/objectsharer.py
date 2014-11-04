@@ -902,6 +902,13 @@ class ZMQBackend(object):
         '''
         return uid in self.uid_to_sock_map
 
+    def connected_to_addr(self, addr):
+        '''
+        Return whether we are connected to client at <addr>
+        '''
+        return self.connected_to(self.get_uid_for_addr(addr))
+
+
     def get_uid_for_addr(self, addr):
         return self.addr_to_uid_map.get(addr, None)
 
