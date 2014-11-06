@@ -28,7 +28,7 @@ import os
 import traceback
 
 logger = logging.getLogger("Object Sharer")
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 DEFAULT_TIMEOUT = 5000      # Timeout in msec
 REDUCE_LATENCY  = True      # Use Voodoo latency reduction?
