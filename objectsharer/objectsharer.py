@@ -265,7 +265,7 @@ class ObjectSharer(object):
         self._last_call_id = 0
         self.reply_objects = {}
 
-        # Signal related 
+        # Signal related
         self._last_hid = 0
         self._callbacks_hid = {}
         self._callbacks_name = {}
@@ -621,11 +621,13 @@ class ObjectSharer(object):
                 self._add_client_to_list(uid, reply))
 
     def client_disconnected(self, uid):
-        logger.info("Client %s disconnected, remove from clients map")
-        del self.clients[uid]
-        for p in ObjectProxy.uid_to_proxy_map[uid]:
-            p._client_disconnected()
-        del ObjectProxy.uid_to_proxy_map[uid]
+        logger.info("Client %s disconnected, remove from clients map", uid)
+        if uid in self.clients:
+            del self.clients[uid]
+        if uid in ObjectProxy.uid_to_proxy_map:
+            for p in ObjectProxy.uid_to_proxy_map[uid]:
+                p._client_disconnected()
+            del ObjectProxy.uid_to_proxy_map[uid]
 
     #####################################
     # Message processing
@@ -941,7 +943,7 @@ class ObjectProxy(object):
         self._disconnect_actions.append(fn)
 
     def _client_disconnected(self):
-        logger.info("client server to %s lost, running %d actions" % (self, len(self._disconnect_actions)))
+        logger.info("client server to %s lost, running %d actions" % (self._OS_UID, len(self._disconnect_actions)))
         for fn in self._disconnect_actions:
             fn()
 
