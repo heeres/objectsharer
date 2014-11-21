@@ -8,8 +8,15 @@ class PythonInterpreter(object):
     def __str__(self):
         return 'A Python interpreter'
 
-    def cmd(self, cmd):
-        retval = eval(cmd, self._namespace, self._namespace)
+    def cmd(self, cmd, namespace=None):
+        '''
+        Execute a python command.
+        Optionally use the namespace <namespace>, otherwise use the internally
+        kept namespace.
+        '''
+        if namespace is None:
+            namespace = self._namespace
+        retval = eval(cmd, namespace, namespace)
         return retval
 
     def ip_queue(self, cmd):
