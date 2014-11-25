@@ -665,8 +665,15 @@ class ObjectSharer(object):
                     return
 
                 # Unwrap arguments
-                args, bufs = _unwrap(args, msg.parts[1:], msg.sender_uid)
-                kwargs, bufs = _unwrap(kwargs, msg.parts[1:], msg.sender_uid)
+                try:
+                    bufs = msg.parts[1:]
+                    args, bufs = _unwrap(args, bufs, msg.sender_uid)
+                    kwargs, bufs = _unwrap(kwargs, bufs, msg.sender_uid)
+                except:
+                    ret = misc.RemoteException('Unable to unwrap objects')
+                    reply = [pickle.dumps((OS_RETURN, callid, ret), PICKLE_PROTO)]
+                    self.backend.send_msg(msg.sender_uid, reply)
+                    return
 
                 if DEBUG:
                     logger.debug('  Processing call %s: %s.%s(%s,%s)', callid, objid, funcname, args, kwargs)
