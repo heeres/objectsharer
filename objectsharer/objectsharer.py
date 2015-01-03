@@ -66,6 +66,7 @@ SPECIAL_FUNCTIONS = (
     '__contains__',
     '__str__',
     '__repr__',
+    '_get_prop',
 )
 
 class OSSpecial(object):
@@ -494,6 +495,7 @@ class ObjectSharer(object):
             return
 
         obj._OS_UID = misc.UID(bytes=uuid.uuid4().bytes)
+        obj._get_prop = lambda name: getattr(obj, name)
         logging.info('New object (alias %s) with UID %s registered', name, obj._OS_UID)
         if name is not None:
             if name in self.name_map:
@@ -943,7 +945,7 @@ class ObjectProxy(object):
                 setattr(self, funcname, func)
 
         for propname in info['properties']:
-            setattr(self, propname, 'blaat')
+            setattr(self, propname, PropertyProxy(self, propname))
 
     def connect(self, signame, func):
         return helper.connect_signal(self._OS_UID, signame, func)
@@ -967,6 +969,14 @@ class ObjectProxy(object):
 
     def os_get_uid(self):
         return self._OS_UID
+
+class PropertyProxy(object):
+    def __init__(self, obj, name):
+        self.obj = obj
+        self.name = name
+
+    def get(self):
+        return self.obj._specials['_get_prop'](self.name)
 
 def set_backend(be):
     '''
