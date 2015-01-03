@@ -34,6 +34,8 @@ PICKLE_PROTO = pickle.HIGHEST_PROTOCOL
 # in real life it does not result in a very big improvement.
 WRAP_NPARRAYS = True
 
+AUTOSHARE_CLASSES = []
+
 # We have the extra DEBUG flag because not doing the logger.debug calls gives
 # a significant speed-up
 DEBUG = False
@@ -152,7 +154,10 @@ def _wrap_ars_sobjs(obj, arlist=None):
                 s=o.shape,
                 t=o.dtype,
             )
-        elif hasattr(o, '_OS_UID'):
+        if any(isinstance(o, t) for t in AUTOSHARE_CLASSES):
+            if not hasattr(o, '_OS_UID'):
+                register(o)
+        if hasattr(o, '_OS_UID'):
             ret = dict(OS_UID=o._OS_UID.b)
             if hasattr(o, '_OS_SRV_ID'):    # Not a local object
                 ret['OS_SRV_ID'] = o._OS_SRV_ID
@@ -200,6 +205,9 @@ def _wrap_sobjs(obj, arlist=None):
     Function to shared objects only.
     '''
     def replace(o):
+        if any(isinstance(o, t) for t in AUTOSHARE_CLASSES):
+            if not hasattr(o, '_OS_UID'):
+                register(o)
         if hasattr(o, '_OS_UID'):
             ret = dict(OS_UID=o._OS_UID.b)
             if hasattr(o, '_OS_SRV_ID'):    # Not a local object
