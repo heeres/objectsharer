@@ -381,22 +381,23 @@ class Backend(object):
 
             # Handle data on sockets
             waiting = (wait_for is not None)
+            msgs = []
             for sock in socks:
-                msgs = self.recv_from(sock)
-                if msgs is None:
-                    continue
+                new_msgs = self.recv_from(sock)
+                if new_msgs is not None:
+                    msgs.extend(new_msgs)
 
-                for msg in msgs:
-                    try:
-                        # Try to look up one more time, as sender uid could
-                        # have been provided by first msg in list
-                        if msg.sender_uid is None:
-                            msg.sender_uid = self.sock_to_uid_map.get(sock, None)
+            for msg in msgs:
+                try:
+                    # Try to look up one more time, as sender uid could
+                    # have been provided by first msg in list
+                    if msg.sender_uid is None:
+                        msg.sender_uid = self.sock_to_uid_map.get(sock, None)
 
-                        self.helper.process_message(msg, waiting=waiting)
+                    self.helper.process_message(msg, waiting=waiting)
 
-                    except Exception, e:
-                        logger.warning('Failed to process message: %s\n%s', str(e), traceback.format_exc())
+                except Exception, e:
+                    logger.warning('Failed to process message: %s\n%s', str(e), traceback.format_exc())
 
             # If we are waiting for call results and have them, return
             if wait_for is not None:
