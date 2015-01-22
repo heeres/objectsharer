@@ -50,6 +50,7 @@ class SocketBackend(backend.Backend):
         if self._srv_sock in rsocks:
             clt_sock, clt_addr = self._srv_sock.accept()
             logger.debug('Accepted new socket, adding %s to select_socks', clt_sock.fileno())
+            clt_sock.setblocking(0)
             self._select_socks.append(clt_sock)
 
             # Remove srv_sock from the list to read from
@@ -83,8 +84,10 @@ class SocketBackend(backend.Backend):
                 del self._select_socks[i]
                 break
 
-        uid = self.sock_to_uid_map[sock]
-        self.helper.client_disconnected(uid)
+        # If disconnected before full connection, uid is not known
+        if sock in self.sock_to_uid_map:
+            uid = self.sock_to_uid_map[sock]
+            self.helper.client_disconnected(uid)
 
         super(SocketBackend, self).client_disconnected(sock)
 
@@ -95,6 +98,8 @@ class SocketBackend(backend.Backend):
         '''
 
         if sock:
+            if sock not in self._send_queue:
+                return
             socklist = [sock]
         else:
             socklist = self._send_queue.keys()
@@ -109,15 +114,16 @@ class SocketBackend(backend.Backend):
                     del datalist[0]
 
                 # Failed, signals disconnection so remove send queue
-                elif nsent == -1:
+                elif nsent == -1 or nsent == 0:
                     del self._send_queue[sock]
-                    logger.info('Sending failed, assuming disconnect')
+                    logger.info('Sending failed (nsent = %d), assuming disconnect', nsent)
                     self.client_disconnected(sock)
+                    break
 
                 # Partially sent, remove that part from queue
                 else:
                     datalist[0] = datalist[0][nsent:]
-                    logger.info('Sent paritally, %d bytes remaining', len(datalist[0]))
+                    logger.info('Sent partially, %d bytes remaining', len(datalist[0]))
                     break
 
         return True

@@ -458,7 +458,7 @@ class ObjectSharer(object):
                 return self._proxy_cache[objname]
 
             # See if we already know which client has this object
-            for client_id, names in self._client_object_list_cache.iteritems():
+            for client_id, names in self._client_object_list_cache.items():
                 if objname in names:
                     return self.get_object_from(objname, client_id)
 
@@ -546,7 +546,7 @@ class ObjectSharer(object):
         if hid in self._callbacks_hid:
             del self._callbacks_hid[hid]
 
-        for name, info_list in self._callbacks_name.iteritems():
+        for name, info_list in self._callbacks_name.items():
             for index, info in enumerate(info_list):
                 if info['hid'] == hid:
                     del self._callbacks_name[name][index]
@@ -559,7 +559,7 @@ class ObjectSharer(object):
                 signame, args, kwargs, uid, len(self.clients))
 
         kwargs[OS_SIGNAL] = True
-        for client_id, client in self.clients.iteritems():
+        for client in self.clients.values():
 #            print 'Calling receive sig, uid=%s, signame %s, args %s, kwargs %s' % (uid, signame, args, kwargs)
             client.receive_signal(uid, signame, *args, **kwargs)
         self.receive_signal(uid, signame, *args, **kwargs)
