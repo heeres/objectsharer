@@ -34,6 +34,8 @@ PICKLE_PROTO = pickle.HIGHEST_PROTOCOL
 # in real life it does not result in a very big improvement.
 WRAP_NPARRAYS = True
 
+AUTOSHARE_CLASSES = []
+
 # We have the extra DEBUG flag because not doing the logger.debug calls gives
 # a significant speed-up
 DEBUG = False
@@ -64,6 +66,8 @@ SPECIAL_FUNCTIONS = (
     '__contains__',
     '__str__',
     '__repr__',
+    '_get_prop',
+    '_set_prop',
 )
 
 class OSSpecial(object):
@@ -152,7 +156,10 @@ def _wrap_ars_sobjs(obj, arlist=None):
                 s=o.shape,
                 t=o.dtype,
             )
-        elif hasattr(o, '_OS_UID'):
+        if any(isinstance(o, t) for t in AUTOSHARE_CLASSES):
+            if not hasattr(o, '_OS_UID'):
+                register(o)
+        if hasattr(o, '_OS_UID'):
             ret = dict(OS_UID=o._OS_UID.b)
             if hasattr(o, '_OS_SRV_ID'):    # Not a local object
                 ret['OS_SRV_ID'] = o._OS_SRV_ID
@@ -200,6 +207,9 @@ def _wrap_sobjs(obj, arlist=None):
     Function to shared objects only.
     '''
     def replace(o):
+        if any(isinstance(o, t) for t in AUTOSHARE_CLASSES):
+            if not hasattr(o, '_OS_UID'):
+                register(o)
         if hasattr(o, '_OS_UID'):
             ret = dict(OS_UID=o._OS_UID.b)
             if hasattr(o, '_OS_SRV_ID'):    # Not a local object
@@ -486,6 +496,8 @@ class ObjectSharer(object):
             return
 
         obj._OS_UID = misc.UID(bytes=uuid.uuid4().bytes)
+        obj._get_prop = lambda name: getattr(obj, name)
+        obj._set_prop = lambda name, val: setattr(obj, name, val)
         logging.info('New object (alias %s) with UID %s registered', name, obj._OS_UID)
         if name is not None:
             if name in self.name_map:
@@ -923,6 +935,22 @@ class ObjectProxy(object):
             s += ': %s' % (func(), )
         return s
 
+    def __getattribute__(self, name):
+        value = object.__getattribute__(self, name)
+        if hasattr(value, '__get__'):
+            value = value.__get__(self, self.__class__)
+        return value
+
+    def __setattr__(self, name, value):
+        try:
+            obj = object.__getattribute__(self, name)
+        except AttributeError:
+            pass
+        else:
+            if hasattr(obj, '__set__'):
+                return obj.__set__(self, value)
+        return object.__setattr__(self, name, value)
+
     def __initialize(self, info):
         if info is None:
             return
@@ -935,7 +963,7 @@ class ObjectProxy(object):
                 setattr(self, funcname, func)
 
         for propname in info['properties']:
-            setattr(self, propname, 'blaat')
+            setattr(self, propname, PropertyProxy(self, propname))
 
     def connect(self, signame, func):
         return helper.connect_signal(self._OS_UID, signame, func)
@@ -960,6 +988,19 @@ class ObjectProxy(object):
     def os_get_uid(self):
         return self._OS_UID
 
+
+class PropertyProxy(object):
+    def __init__(self, obj, name):
+        self.obj = obj
+        self.name = name
+
+    def __get__(self, obj, type=None):
+        return self.obj._specials['_get_prop'](self.name)
+
+    def __set__(self, obj, value):
+        self.obj._specials['_set_prop'](self.name, value)
+
+
 def set_backend(be):
     '''
     Initialize objectsharer using appropriate backend.
@@ -978,6 +1019,7 @@ def add_os_args(args):
 
 helper = ObjectSharer()
 register = helper.register
+unregister = helper.unregister
 find_object = helper.find_object
 
 root = RootObject()
