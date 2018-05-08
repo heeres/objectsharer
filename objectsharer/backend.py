@@ -429,10 +429,12 @@ class Backend(object):
             logger.warning('Timer already installed')
             return False
 
-        from PyQt4 import QtCore, QtGui
-        _app = QtGui.QApplication.instance()
+        try:
+            from qtpy import QtCore
+        except ImportError:
+            from PyQt4 import QtCore
         self.timer = QtCore.QTimer()
-        QtCore.QObject.connect(self.timer, QtCore.SIGNAL('timeout()'), self._qt_timer)
+        self.timer.timeout.connect(self._qt_timer)
         self.timer.start(interval)
         return True
 
